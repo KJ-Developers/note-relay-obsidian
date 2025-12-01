@@ -1,0 +1,10 @@
+
+{
+    "id": "noterelay",
+    "name": "Note Relay",
+    "version": "7.1.0",
+    "minAppVersion": "0.15.0",
+    "description": "Access your vault locally and remotely with identity-based access control",
+    "author": "KJ-Developers",
+    "isDesktopOnly": true
+}

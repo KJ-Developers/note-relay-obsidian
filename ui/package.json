@@ -1,0 +1,22 @@
+{
+  "name": "@note-relay/ui",
+  "version": "7.1.0",
+  "description": "Web UI for Note Relay",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "author": "KJ-Developers",
+  "license": "MIT",
+  "devDependencies": {
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "easymde": "^2.18.0",
+    "force-graph": "^1.51.0",
+    "marked": "^11.1.1",
+    "prismjs": "^1.29.0"
+  }
+}

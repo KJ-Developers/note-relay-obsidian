@@ -1,0 +1,35 @@
+{
+  "name": "note-relay",
+  "version": "7.1.0",
+  "description": "Access your Obsidian vault from anywhere with zero-knowledge privacy",
+  "author": "KJ-Developers",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "plugin",
+    "ui"
+  ],
+  "scripts": {
+    "build": "npm run build:ui && npm run build:plugin",
+    "build:ui": "npm --workspace=ui run build",
+    "build:plugin": "npm --workspace=plugin run build",
+    "dev:ui": "npm --workspace=ui run dev",
+    "dev:plugin": "npm --workspace=plugin run dev",
+    "install:all": "npm install --workspaces"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "remote-access",
+    "webrtc",
+    "zero-knowledge",
+    "peer-to-peer"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KJ-Developers/note-relay-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KJ-Developers/note-relay-plugin/issues"
+  }
+}
