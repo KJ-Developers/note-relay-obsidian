@@ -16,6 +16,7 @@
   "dependencies": {
     "easymde": "^2.18.0",
     "force-graph": "^1.51.0",
+    "js-yaml": "^4.1.1",
     "marked": "^11.1.1",
     "prismjs": "^1.29.0"
   }

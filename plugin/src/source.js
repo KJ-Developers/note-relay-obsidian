@@ -228,6 +228,7 @@ class MicroServer extends obsidian.Plugin {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Note Relay V2</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
     <link rel="stylesheet" href="/style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
@@ -237,7 +238,7 @@ class MicroServer extends obsidian.Plugin {
     <div id="context-menu" class="context-menu"></div>
 
     <div id="connect-overlay">
-        <h1 style="margin-bottom: 20px;">PROJECT PORTAL</h1>
+        <h1 style="margin-bottom: 20px; color: #dcddde; font-weight: 600;">Note Relay</h1>
         <input type="password" id="password-input" placeholder="Enter Vault Password">
         <button id="connect-btn">Unlock Vault</button>
         <div id="status-text">v12.9 - Modular Bundle</div>
@@ -307,7 +308,7 @@ class MicroServer extends obsidian.Plugin {
         </div>
         <div id="pane-editor">
             <div id="editor-header">
-                <span id="filename" style="font-weight:700; color:var(--text);">Select a note...</span>
+                <span id="filename" style="font-weight:700; color:var(--text-normal);">Select a note...</span>
                 <div style="display:flex; align-items:center;">
                     <button id="focus-btn" class="header-btn" title="Toggle Focus Mode" onclick="toggleFocus()"><i class="fa-solid fa-maximize"></i></button>
                     <button id="view-btn" class="header-btn" title="Toggle Reading/Editing" onclick="toggleViewMode()"><i class="fa-regular fa-eye"></i></button>
@@ -321,6 +322,7 @@ class MicroServer extends obsidian.Plugin {
                     <div class="spinner"></div>
                     <div>Rendering High-Fidelity View...</div>
                 </div>
+                <div id="yaml-properties-container" class="yaml-properties-container" style="display: none;"></div>
                 <div id="custom-preview"></div>
             </div>
 
@@ -790,10 +792,31 @@ class MicroServer extends obsidian.Plugin {
 
         try {
             const content = await this.app.vault.read(file);
+            
+            // Extract YAML frontmatter
+            let yamlData = null;
+            let contentWithoutYaml = content;
+            const yamlMatch = content.match(/^---\n([\s\S]*?)\n---\n?/);
+            
+            if (yamlMatch) {
+                const yamlText = yamlMatch[1];
+                try {
+                    // Parse YAML to object (Obsidian's parser handles it)
+                    const cache = this.app.metadataCache.getFileCache(file);
+                    if (cache && cache.frontmatter) {
+                        yamlData = { ...cache.frontmatter };
+                        delete yamlData.position; // Remove metadata
+                    }
+                    contentWithoutYaml = content.slice(yamlMatch[0].length);
+                } catch (err) {
+                    console.warn('Invalid YAML frontmatter:', err);
+                }
+            }
+            
             const div = document.createElement('div');
             
-            // Render Markdown
-            await obsidian.MarkdownRenderer.render(this.app, content, div, file.path, this);
+            // Render Markdown WITHOUT frontmatter
+            await obsidian.MarkdownRenderer.render(this.app, contentWithoutYaml, div, file.path, this);
             
             // Smart Rendering: Wait for Dataview/Plugins to settle
             await this.waitForRender(div);
@@ -881,7 +904,8 @@ class MicroServer extends obsidian.Plugin {
 
             // PREPARE RESPONSE
             const response = { 
-              html: div.innerHTML, 
+              html: div.innerHTML,
+              yaml: yamlData,
               css: themeCSS, 
               backlinks, 
               graph: graphData 
@@ -1054,8 +1078,109 @@ class MicroServer extends obsidian.Plugin {
         return;
       }
 
+      if (msg.cmd === 'OPEN_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+        
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        
+        if (!file) {
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
+        }
+        
+        // Check frontmatter for plugin types
+        const metadata = this.app.metadataCache.getFileCache(file);
+        const frontmatter = metadata?.frontmatter || {};
+        
+        // Detect plugin type
+        let detectedPlugin = null;
+        if (frontmatter['kanban-plugin']) detectedPlugin = 'kanban';
+        else if (frontmatter['dataview']) detectedPlugin = 'dataview';
+        else if (frontmatter['excalidraw-plugin']) detectedPlugin = 'excalidraw';
+        
+        if (!detectedPlugin) {
+          this.processCommand({
+            cmd: 'GET_RENDERED_FILE',
+            path: safePath
+          }, sendCallback);
+          return;
+        }
+        
+        // Try to capture plugin view HTML from existing open leaf
+        const workspace = this.app.workspace;
+        let kanbanLeaf = workspace.getLeavesOfType('kanban')[0];
+        
+        if (!kanbanLeaf) {
+          // Try to open the file in a new tab to create the view
+          try {
+            const newLeaf = workspace.getLeaf('tab');
+            await newLeaf.openFile(file);
+            
+            // Check if it's now a kanban view
+            if (newLeaf.getViewState().type === 'kanban') {
+              kanbanLeaf = newLeaf;
+            }
+          } catch (openError) {
+            console.error('Failed to open file:', openError);
+          }
+        }
+        
+        // If we have a leaf, extract the rendered HTML
+        if (kanbanLeaf) {
+          const view = kanbanLeaf.view;
+          
+          if (view.containerEl) {
+            const kanbanBoard = view.containerEl.querySelector('.kanban-plugin');
+            
+            if (kanbanBoard) {
+              const capturedHTML = kanbanBoard.outerHTML;
+              
+              console.log('🎨 ========== KANBAN CAPTURE DEBUG ==========');
+              console.log('📏 HTML length:', capturedHTML.length);
+              console.log('📝 HTML preview (first 1000 chars):', capturedHTML.substring(0, 1000));
+              console.log('📝 HTML preview (last 500 chars):', capturedHTML.substring(capturedHTML.length - 500));
+              
+              // Extract Kanban plugin CSS
+              const kanbanCSS = this.extractPluginCSS('.kanban-plugin');
+              
+              console.log('🎨 CSS length:', kanbanCSS.length);
+              console.log('🎨 CSS preview (first 2000 chars):', kanbanCSS.substring(0, 2000));
+              console.log('🎨 CSS rule count:', (kanbanCSS.match(/\{/g) || []).length);
+              
+              const response = {
+                renderedHTML: capturedHTML,
+                pluginCSS: kanbanCSS,
+                viewType: 'kanban',
+                success: true
+              };
+              
+              console.log('📦 Response object keys:', Object.keys(response));
+              console.log('📦 Response.renderedHTML length:', response.renderedHTML.length);
+              console.log('📦 Response.pluginCSS length:', response.pluginCSS.length);
+              console.log('🎨 ========== END CAPTURE DEBUG ==========');
+              
+              sendCallback('OPEN_FILE', response, { path: safePath });
+              
+              return;
+            }
+          }
+        }
+        
+        // If we got here, fall back to markdown rendering
+        
+        this.processCommand({
+          cmd: 'GET_RENDERED_FILE',
+          path: safePath
+        }, sendCallback);
+        
+        return;
+      }
 
-      
     } catch (error) {
       console.error('Portal Command Error:', error);
       sendCallback('ERROR', { message: error.message });
@@ -1342,6 +1467,24 @@ class MicroServer extends obsidian.Plugin {
     });
   }
 
+  async checkConnectionHealth() {
+    // Check if signaling connection is still alive
+    if (!this.supabase || !this.settings.userEmail) {
+      console.log('Note Relay: Connection health check - not connected');
+      return;
+    }
+    
+    const timeSinceLastHeartbeat = Date.now() - (this.lastHeartbeatTime || 0);
+    
+    // If more than 6 minutes since last heartbeat, reconnect
+    if (timeSinceLastHeartbeat > 6 * 60 * 1000) {
+      console.log('Note Relay: Connection stale, reconnecting...');
+      await this.connectSignaling();
+    } else {
+      console.log('Note Relay: Connection healthy');
+    }
+  }
+
   async connectSignaling() {
     // SECURITY CHECK: Do not connect to Supabase if no email is present.
     if (!this.settings.userEmail) {
@@ -1389,42 +1532,154 @@ class MicroServer extends obsidian.Plugin {
   }
 
   extractThemeCSS() {
-    const styles = getComputedStyle(document.body);
-    const variables = [
+    // Capture CSS rules AND essential theme variables
+    const allCSS = [];
+    
+    // First, get computed theme variables from body (ensures we get active theme)
+    const bodyStyles = getComputedStyle(document.body);
+    const essentialVars = [
       '--background-primary',
       '--background-secondary',
-      '--background-secondary-alt',
       '--background-primary-alt',
+      '--background-secondary-alt',
       '--background-modifier-border',
+      '--background-modifier-hover',
       '--background-modifier-border-hover',
-      '--background-modifier-form-field',
       '--text-normal',
       '--text-muted',
-      '--text-accent',
       '--text-faint',
+      '--text-accent',
       '--text-accent-hover',
       '--interactive-accent',
       '--interactive-accent-hover',
-      '--font-interface',
-      '--font-text',
-      '--font-monospace',
-      '--table-border-color',
-      '--table-header-bg',
-      '--table-row-bg',
-      '--table-row-alt-bg',
-      '--checkbox-color',
-      '--checkbox-marker-color',
-      '--blockquote-border-color',
-      '--blockquote-background-color'
+      '--tag-background',
+      '--tag-color'
     ];
-
-    let css = ':root {\n';
-    variables.forEach(v => {
-      const val = styles.getPropertyValue(v).trim();
-      if (val) css += `  ${v}: ${val};\n`;
+    
+    // DEBUG: Log what we're extracting
+    console.log('🎨 THEME EXTRACTION DEBUG:');
+    
+    // Build :root block with essential variables at the top
+    let rootVars = ':root {\n';
+    essentialVars.forEach(varName => {
+      const value = bodyStyles.getPropertyValue(varName).trim();
+      console.log(`  ${varName}: ${value || 'NOT FOUND'}`);
+      if (value) {
+        // Add !important to ensure these override fallbacks
+        rootVars += `  ${varName}: ${value} !important;\n`;
+      }
     });
-    css += '}';
-    return css;
+    rootVars += '}\n';
+    allCSS.push(rootVars);
+    
+    console.log('📋 Root vars block:', rootVars);
+    console.log('📊 Total stylesheet count:', document.styleSheets.length);
+    
+    // Then capture stylesheet rules (filtered)
+    Array.from(document.styleSheets).forEach(sheet => {
+      try {
+        // Only process if we can access cssRules (CORS check)
+        if (sheet.cssRules) {
+          Array.from(sheet.cssRules).forEach(rule => {
+            const cssText = rule.cssText;
+            
+            // Skip @font-face rules (contain app:// URLs that fail CORS)
+            if (cssText.startsWith('@font-face')) {
+              return;
+            }
+            
+            // Skip rules with app:// protocol URLs
+            if (cssText.includes('app://')) {
+              return;
+            }
+            
+            // Skip rules with /public/ paths (Obsidian internal)
+            if (cssText.includes('/public/')) {
+              return;
+            }
+            
+            // Include everything else (CSS variables, colors, styles, plugin CSS)
+            allCSS.push(cssText);
+          });
+        }
+      } catch (e) {
+        // Skip CORS-blocked stylesheets
+      }
+    });
+    
+    return allCSS.join('\n');
+  }
+
+  extractPluginCSS(pluginClass) {
+    // Extract CSS rules that apply to a specific plugin's classes
+    const pluginCSS = [];
+    const seenRules = new Set(); // Deduplicate rules
+    
+    // First, add all Obsidian CSS variables that the plugin might use
+    const rootVars = getComputedStyle(document.body);
+    const obsidianVars = [
+      '--size-2-1', '--size-2-2', '--size-2-3',
+      '--size-4-1', '--size-4-2', '--size-4-3', '--size-4-4',
+      '--size-4-5', '--size-4-6', '--size-4-8', '--size-4-12',
+      '--background-primary', '--background-secondary',
+      '--background-primary-alt', '--background-secondary-alt',
+      '--background-modifier-border', '--background-modifier-border-hover',
+      '--background-modifier-border-focus',
+      '--text-normal', '--text-muted', '--text-faint',
+      '--interactive-accent', '--interactive-hover',
+      '--table-border-width', '--table-border-color',
+      '--font-text-size', '--font-ui-small', '--font-ui-smaller',
+      '--clickable-icon-radius', '--radius-s', '--radius-m',
+      '--tag-padding-x', '--tag-padding-y', '--tag-radius'
+    ];
+    
+    let varsBlock = ':root {\n';
+    obsidianVars.forEach(varName => {
+      const value = rootVars.getPropertyValue(varName).trim();
+      if (value) {
+        varsBlock += `  ${varName}: ${value};\n`;
+      }
+    });
+    varsBlock += '}\n';
+    pluginCSS.push(varsBlock);
+    
+    // Extract base class name for pattern matching
+    // e.g., '.kanban-plugin' -> 'kanban-plugin'
+    const baseClassName = pluginClass.replace(/^\./, '');
+    
+    Array.from(document.styleSheets).forEach(sheet => {
+      try {
+        if (sheet.cssRules) {
+          Array.from(sheet.cssRules).forEach(rule => {
+            const cssText = rule.cssText;
+            
+            // Skip problematic rules
+            if (cssText.startsWith('@font-face') || cssText.includes('app://')) {
+              return;
+            }
+            
+            // Skip if we've already seen this rule
+            if (seenRules.has(cssText)) {
+              return;
+            }
+            
+            // Include rules that:
+            // 1. Contain the base class name (catches .kanban-plugin, .kanban-plugin__item, etc.)
+            // 2. Start with the base class (catches .kanban-plugin { ... })
+            if (cssText.includes(baseClassName)) {
+              pluginCSS.push(cssText);
+              seenRules.add(cssText);
+            }
+          });
+        }
+      } catch (e) {
+        // CORS error, skip
+      }
+    });
+    
+    console.log('🎨 Extracted', pluginCSS.length - 1, 'CSS rules for', baseClassName);
+    
+    return pluginCSS.join('\n');
   }
 
   getMimeType(ext) {
@@ -1488,7 +1743,7 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     containerEl.empty();
     
     // Header
-    containerEl.createEl('h2', { text: 'Project Portal Settings' });
+    containerEl.createEl('h2', { text: 'Note Relay Settings' });
     
     // Device Status
     const isHost = true; // Always treat as host

@@ -1,17 +1,22 @@
 /* Note Relay UI - Complete Styles */
 /* Extracted from client.html */
 
-/* 1. THEME VARIABLES (Dark Mode Default) */
+/* 1. THEME VARIABLES (Fallback defaults - will be overridden by Obsidian theme) */
 :root {
+    /* Color fallbacks (dark theme) */
     --background-primary: #1e1e1e;
-    --background-secondary: #202020;
+    --background-secondary: #252525;
     --background-secondary-alt: #161616;
-    --background-modifier-border: #333333;
-    --background-modifier-hover: rgba(255, 255, 255, 0.1);
+    --background-modifier-border: #333;
+    --background-modifier-hover: rgba(255,255,255,0.1);
     --text-normal: #dcddde;
-    --text-muted: #999999;
+    --text-muted: #999;
+    --text-faint: #666;
     --text-accent: #7c3aed;
     --interactive-accent: #7c3aed;
+    --interactive-accent-hover: #8b5cf6;
+    
+    /* Layout */
     --line-height-normal: 1.5;
     --font-interface: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -30,7 +35,7 @@ body {
     height: 100vh;
     display: flex;
     flex-direction: row;
-    background-color: var(--background-primary);
+    background: var(--background-primary) !important;
     color: var(--text-normal);
     font-family: var(--font-interface);
     overflow: hidden;
@@ -99,7 +104,7 @@ body {
 /* 4. SIDEBAR (File Tree) */
 #sidebar {
     width: 260px;
-    background-color: var(--background-secondary);
+    background: var(--background-secondary) !important;
     border-right: 1px solid var(--background-modifier-border);
     display: flex;
     flex-direction: column;
@@ -455,6 +460,9 @@ body {
 #graph-canvas,
 #backlinks-list {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
     overflow-y: auto;
     padding: 10px;
 }
@@ -466,6 +474,7 @@ body {
     margin-bottom: 2px;
     font-size: 0.9em;
     color: var(--text-normal);
+    display: block;
 }
 
 .backlink-item:hover {
@@ -635,6 +644,12 @@ body {
     align-items: center;
 }
 
+#connect-overlay h1 {
+    color: #dcddde;
+    font-weight: 600;
+    margin-bottom: 20px;
+}
+
 #connect-btn {
     padding: 12px 24px;
     font-size: 1.1em;
@@ -694,7 +709,7 @@ body {
 /* EasyMDE Overrides */
 .EasyMDEContainer {
     flex: 1;
-    display: flex;
+    display: none;  /* Hidden until file loads */
     flex-direction: column;
     height: 100%;
     border: none;
@@ -921,4 +936,591 @@ a {
     display: block !important;
     text-align: center;
     margin: 1em 0;
+}
+
+/* YAML Properties Panel - Obsidian Style */
+.yaml-properties-container {
+    margin: 0 0 20px 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-secondary);
+    overflow: visible;
+}
+
+.yaml-header {
+    padding: 10px 14px;
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 500;
+    font-size: 13px;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.yaml-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.yaml-header i:first-child {
+    margin-right: 8px;
+    color: var(--text-muted);
+    font-size: 11px;
+    transition: transform 0.2s;
+}
+
+/* Plugin View Badge */
+.plugin-view-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, rgba(124, 77, 255, 0.1), rgba(56, 189, 248, 0.1));
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: 12px;
+}
+
+.plugin-icon {
+    font-size: 16px;
+}
+
+.plugin-label {
+    font-weight: 500;
+    color: var(--text-normal);
+    flex: 1;
+}
+
+.plugin-toggle-btn {
+    padding: 4px 10px;
+    background: var(--interactive-accent);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: var(--font-interface);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: opacity 0.15s;
+}
+
+.plugin-toggle-btn:hover {
+    opacity: 0.9;
+}
+
+.plugin-attribution {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.yaml-content {
+    padding: 8px;
+    transition: all 0.2s;
+}
+
+.yaml-content.collapsed {
+    display: none;
+}
+
+.yaml-property {
+    display: flex;
+    gap: 12px;
+    padding: 8px;
+    border-radius: 4px;
+    align-items: flex-start;
+    transition: background 0.15s;
+}
+
+.yaml-property:hover {
+    background: var(--background-modifier-hover);
+}
+
+.yaml-delete-property {
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.yaml-property:hover .yaml-delete-property {
+    opacity: 1;
+}
+
+.yaml-delete-property:hover {
+    color: var(--text-error);
+    background: var(--background-modifier-error);
+}
+
+.yaml-key {
+    min-width: 120px;
+    max-width: 120px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    padding-top: 6px;
+    word-break: break-word;
+}
+
+.yaml-value {
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+.yaml-value input[type="text"],
+.yaml-value input[type="date"],
+.yaml-value input[type="number"],
+.yaml-value textarea {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-normal);
+    font-family: var(--font-interface);
+    font-size: 13px;
+    transition: border-color 0.15s;
+}
+
+.yaml-value textarea {
+    resize: vertical;
+    min-height: 60px;
+    font-family: var(--font-text);
+    line-height: 1.5;
+}
+
+.yaml-value input[type="text"]:focus,
+.yaml-value input[type="date"]:focus,
+.yaml-value input[type="number"]:focus,
+.yaml-value textarea:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+}
+
+/* Number input spinners - ensure visibility */
+.yaml-value input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.yaml-value input[type="number"]::-webkit-inner-spin-button,
+.yaml-value input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: inner-spin-button !important;
+    opacity: 1 !important;
+    position: relative;
+    height: auto;
+    width: auto;
+    cursor: pointer;
+    display: inline-block !important;
+    margin-left: 4px;
+}
+
+/* For Firefox */
+.yaml-value input[type="number"] {
+    -moz-appearance: number-input;
+}
+
+/* Ensure date picker calendar icon is visible and styled */
+.yaml-value input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 1;
+    width: 20px;
+    height: 20px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 448 512'%3E%3Cpath fill='%237c7f93' d='M128 0c17.7 0 32 14.3 32 32V64H288V32c0-17.7 14.3-32 32-32s32 14.3 32 32V64h48c26.5 0 48 21.5 48 48v48H0V112C0 85.5 21.5 64 48 64H96V32c0-17.7 14.3-32 32-32zM0 192H448V464c0 26.5-21.5 48-48 48H48c-26.5 0-48-21.5-48-48V192zm64 80v32c0 8.8 7.2 16 16 16h32c8.8 0 16-7.2 16-16V272c0-8.8-7.2-16-16-16H80c-8.8 0-16 7.2-16 16zm128 0v32c0 8.8 7.2 16 16 16h32c8.8 0 16-7.2 16-16V272c0-8.8-7.2-16-16-16H208c-8.8 0-16 7.2-16 16zm144-16c-8.8 0-16 7.2-16 16v32c0 8.8 7.2 16 16 16h32c8.8 0 16-7.2 16-16V272c0-8.8-7.2-16-16-16H336zM64 400v32c0 8.8 7.2 16 16 16h32c8.8 0 16-7.2 16-16V400c0-8.8-7.2-16-16-16H80c-8.8 0-16 7.2-16 16zm144-16c-8.8 0-16 7.2-16 16v32c0 8.8 7.2 16 16 16h32c8.8 0 16-7.2 16-16V400c0-8.8-7.2-16-16-16H208zm112 16v32c0 8.8 7.2 16 16 16h32c8.8 0 16-7.2 16-16V400c0-8.8-7.2-16-16-16H336c-8.8 0-16 7.2-16 16z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px;
+    transition: opacity 0.15s;
+}
+
+.yaml-value input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 0.7;
+}
+
+.yaml-value input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--interactive-accent);
+}
+
+.yaml-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    width: 100%;
+}
+
+.yaml-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--interactive-accent);
+    color: white;
+    border-radius: 12px;
+    font-size: 12px;
+    transition: opacity 0.15s;
+}
+
+.yaml-tag-chip:hover {
+    opacity: 0.9;
+}
+
+.yaml-tag-chip i {
+    cursor: pointer;
+    opacity: 0.7;
+    font-size: 11px;
+}
+
+.yaml-tag-chip i:hover {
+    opacity: 1;
+}
+
+.yaml-tag-input {
+    min-width: 120px;
+    max-width: 200px;
+    flex: 1;
+}
+
+.yaml-add-property {
+    margin-top: 8px;
+    padding: 8px;
+}
+
+.yaml-add-property button {
+    padding: 6px 12px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-normal);
+    font-size: 12px;
+    font-family: var(--font-interface);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+}
+
+.yaml-add-property button:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
+.yaml-add-property button i {
+    font-size: 11px;
+}
+
+/* Tag Dropdown */
+.yaml-tag-dropdown {
+    position: fixed;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-height: 250px;
+    overflow-y: auto;
+    min-width: 150px;
+}
+
+.yaml-tag-suggestion {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-normal);
+    transition: background 0.15s;
+}
+
+.yaml-tag-suggestion:hover,
+.yaml-tag-suggestion:focus {
+    background: var(--background-modifier-hover);
+    outline: none;
+}
+
+.yaml-tag-suggestion i {
+    color: var(--interactive-accent);
+    font-size: 12px;
+}
+
+/* Property dropdown styling */
+.yaml-property-dropdown {
+    position: fixed;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    min-width: 250px;
+    max-width: 350px;
+    display: flex;
+    flex-direction: column;
+}
+
+.yaml-property-search {
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+    outline: none;
+}
+
+.yaml-property-search::placeholder {
+    color: var(--text-muted);
+}
+
+.yaml-property-suggestions {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.yaml-property-suggestion {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-normal);
+    transition: background 0.15s;
+}
+
+.yaml-property-suggestion:hover,
+.yaml-property-suggestion:focus {
+    background: var(--background-modifier-hover);
+    outline: none;
+}
+
+.yaml-property-suggestion i {
+    color: var(--interactive-accent);
+    font-size: 12px;
+    width: 14px;
+    text-align: center;
+}
+
+.yaml-property-suggestion.yaml-custom {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.yaml-property-suggestion.yaml-custom:hover {
+    background: transparent;
+}
+
+/* Link property styling */
+.yaml-link-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    min-height: 34px;
+}
+
+.yaml-link-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.yaml-internal-link {
+    color: var(--text-accent);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--background-modifier-hover);
+    transition: background 0.15s, color 0.15s;
+    font-size: 12px;
+}
+
+.yaml-internal-link:hover {
+    background: var(--background-modifier-hover);
+    text-decoration: underline;
+}
+
+.yaml-internal-link i {
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.yaml-edit-link {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.yaml-property:hover .yaml-edit-link {
+    opacity: 1;
+}
+
+.yaml-edit-link:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Link autocomplete dropdown */
+.yaml-link-dropdown {
+    position: fixed;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-height: 300px;
+    overflow-y: auto;
+    min-width: 200px;
+}
+
+.yaml-link-suggestion {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-normal);
+    transition: background 0.15s;
+}
+
+.yaml-link-suggestion:hover,
+.yaml-link-suggestion:focus {
+    background: var(--background-modifier-hover);
+    outline: none;
+}
+
+.yaml-link-suggestion i {
+    color: var(--interactive-accent);
+    font-size: 12px;
+}
+
+.yaml-link-suggestion.yaml-custom {
+    cursor: default;
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.yaml-link-suggestion.yaml-custom:hover {
+    background: transparent;
+}
+
+/* Property type selector */
+.yaml-type-selector {
+    position: fixed;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    z-index: 10000;
+    width: 300px;
+    overflow: hidden;
+}
+
+.yaml-type-header {
+    padding: 12px 16px;
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-normal);
+}
+
+.yaml-type-option {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.yaml-type-option:last-child {
+    border-bottom: none;
+}
+
+.yaml-type-option:hover {
+    background: var(--background-modifier-hover);
+}
+
+.yaml-type-option i {
+    color: var(--interactive-accent);
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+}
+
+.yaml-type-option div {
+    flex: 1;
+}
+
+.yaml-type-option strong {
+    display: block;
+    font-size: 13px;
+    color: var(--text-normal);
+    margin-bottom: 2px;
+}
+
+.yaml-type-option span {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Back button in file header */
+#filename {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#back-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+#back-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+#back-btn i {
+    font-size: 13px;
 }

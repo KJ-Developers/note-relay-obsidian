@@ -79,6 +79,41 @@ export function processFileData(data) {
  * Render tree node recursively
  */
 export function renderNode(node, container, level, parentPath, currentView, icons, onNodeClick) {
+    // Add root node for unfiled notes (only at root level for folders view)
+    if (level === 0 && currentView === 'folders' && node._files && node._files.length > 0) {
+        const rootDiv = document.createElement('div');
+        rootDiv.className = 'tree-item-wrapper';
+        
+        const rootLabel = document.createElement('div');
+        rootLabel.className = 'tree-label file-tree-item';
+        rootLabel.setAttribute('data-path', '/');
+        rootLabel.setAttribute('data-type', 'root');
+        rootLabel.style.paddingLeft = '0px';
+        
+        const rootIcon = document.createElement('span');
+        rootIcon.className = 'tree-icon';
+        rootIcon.innerHTML = '<i class="fa-solid fa-home"></i>';
+        
+        const rootText = document.createElement('span');
+        rootText.className = 'tree-text';
+        rootText.textContent = `Root Notes (${node._files.length})`;
+        
+        rootLabel.appendChild(rootIcon);
+        rootLabel.appendChild(rootText);
+        
+        rootLabel.onclick = () => {
+            document.querySelectorAll('.tree-label').forEach(d => d.classList.remove('selected'));
+            rootLabel.classList.add('selected');
+            
+            if (onNodeClick) {
+                onNodeClick('/', node._files);
+            }
+        };
+        
+        rootDiv.appendChild(rootLabel);
+        container.appendChild(rootDiv);
+    }
+    
     Object.keys(node._sub || {}).sort().forEach(key => {
         const child = node._sub[key];
         const hasSub = Object.keys(child._sub || {}).length > 0;
@@ -92,7 +127,7 @@ export function renderNode(node, container, level, parentPath, currentView, icon
         const label = document.createElement('div');
         label.className = 'tree-label file-tree-item';
         label.setAttribute('data-path', fullPath);
-        label.setAttribute('data-type', 'folder');
+        label.setAttribute('data-type', isFolder ? 'folder' : 'tag');
         label.style.paddingLeft = `${level * 12}px`;
         
         const caret = document.createElement('span');

@@ -15,7 +15,7 @@ export default defineConfig({
         inlineDynamicImports: true,
       }
     },
-    minify: 'esbuild',
+    minify: false,
     cssCodeSplit: false,
     outDir: 'dist',
     emptyOutDir: true
