@@ -2848,8 +2848,38 @@ function sortFiles() {
 /**
  * Open daily note
  */
-function openDailyNote() {
-    alert('Daily Notes coming in V2.');
+async function openDailyNote() {
+    if (!conn) {
+        alert('Not connected to vault.');
+        return;
+    }
+    
+    try {
+        console.log('📅 Sending OPEN_DAILY_NOTE command...');
+        const response = await conn.send('OPEN_DAILY_NOTE', {});
+        console.log('📅 Response received:', response);
+        
+        // Response structure is {type, data, meta} from HTTP callback
+        const data = response.data || response;
+        
+        if (data.success && data.path) {
+            console.log('📅 Loading file:', data.path);
+            
+            // Clear welcome screen before loading
+            const preview = document.getElementById('custom-preview');
+            if (preview) preview.innerHTML = '';
+            
+            await loadFile(data.path);
+            console.log('📅 File loaded successfully');
+        } else if (data.message) {
+            alert(data.message);
+        } else {
+            console.error('📅 Unexpected response format:', response);
+        }
+    } catch (error) {
+        console.error('Failed to open daily note:', error);
+        alert('Failed to open daily note. Make sure the Daily Notes plugin is enabled in Obsidian.');
+    }
 }
 
 /**

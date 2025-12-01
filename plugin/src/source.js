@@ -1166,6 +1166,10 @@ class MicroServer extends obsidian.Plugin {
               
               sendCallback('OPEN_FILE', response, { path: safePath });
               
+              // Close the leaf after capturing
+              kanbanLeaf.detach();
+              console.log('🗑️ Closed Kanban leaf');
+              
               return;
             }
           }
@@ -1178,6 +1182,50 @@ class MicroServer extends obsidian.Plugin {
           path: safePath
         }, sendCallback);
         
+        return;
+      }
+
+      if (msg.cmd === 'OPEN_DAILY_NOTE') {
+        try {
+          // Check if daily notes plugin is enabled
+          const dailyNotesPlugin = this.app.internalPlugins?.plugins?.['daily-notes'];
+          
+          if (!dailyNotesPlugin || !dailyNotesPlugin.enabled) {
+            sendCallback('ERROR', { message: 'Daily Notes plugin is not enabled in Obsidian' });
+            return;
+          }
+          
+          // Use Obsidian's command to create/open today's daily note
+          // This properly processes Templater and respects all settings
+          this.app.commands.executeCommandById('daily-notes');
+          
+          // Wait for the command to complete (file creation + Templater processing)
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          const activeFile = this.app.workspace.getActiveFile();
+          
+          if (!activeFile) {
+            sendCallback('ERROR', { message: 'No file opened after daily notes command' });
+            return;
+          }
+          
+          console.log('📅 Daily note created/opened:', activeFile.path);
+          
+          // Get the active leaf and close it
+          const activeLeaf = this.app.workspace.getLeaf(false);
+          if (activeLeaf) {
+            activeLeaf.detach();
+            console.log('🗑️ Closed daily note leaf');
+          }
+          
+          // Just return the path - let web UI load it normally
+          const response = { success: true, path: activeFile.path };
+          sendCallback('OPEN_DAILY_NOTE', response);
+          
+        } catch (error) {
+          console.error('Daily Note Error:', error);
+          sendCallback('ERROR', { message: 'Failed to open daily note: ' + error.message });
+        }
         return;
       }
 
