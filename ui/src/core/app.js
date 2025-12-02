@@ -193,10 +193,14 @@ function setupEventListeners() {
  * Handle document clicks (links, tags, checkboxes)
  */
 async function handleDocumentClick(e) {
-    // Checkbox handling
+    // Checkbox handling (including dataview checkboxes)
     if (e.target.type === 'checkbox' && e.target.closest('#custom-preview')) {
         e.preventDefault();
         e.stopPropagation();
+        // Don't process dataview checkboxes - they're read-only
+        if (e.target.classList.contains('dataview')) {
+            return;
+        }
         await handleCheckboxClick(e.target);
         return;
     }
@@ -234,12 +238,26 @@ async function handleDocumentClick(e) {
         }
         return;
     }
+    
+    // Prevent other clicks inside dataview from doing anything
+    if (e.target.closest('.dataview-container') || e.target.closest('.block-language-dataview')) {
+        e.preventDefault();
+        return;
+    }
 }
 
 /**
  * Handle checkbox clicks in preview mode
  */
 async function handleCheckboxClick(checkbox) {
+    // Prevent multiple simultaneous checkbox saves
+    if (window._checkboxSaveInProgress) {
+        console.log('⏳ Checkbox save already in progress, skipping...');
+        checkbox.checked = !checkbox.checked; // Revert the visual change
+        return;
+    }
+    
+    window._checkboxSaveInProgress = true;
     const newCheckedState = checkbox.checked;
     const listItem = checkbox.closest('li');
     
@@ -247,24 +265,32 @@ async function handleCheckboxClick(checkbox) {
         const file = masterFileList.find(f => f.path === currentPath);
         if (file) {
             try {
+                console.log('📝 Checkbox clicked, fetching file content...');
                 const result = await conn.send('GET_FILE', { path: currentPath });
                 let content = result.data?.data || result.data?.content || result.data;
                 
                 if (typeof content !== 'string') {
                     console.error('Content is not a string');
                     checkbox.checked = !checkbox.checked;
+                    window._checkboxSaveInProgress = false;
                     return;
                 }
                 
                 const taskRegex = /^(\s*[-*+]\s+\[)([xX\s])(\])/gm;
                 let checkboxIndex = 0;
-                const targetIndex = Array.from(document.querySelectorAll('#custom-preview input[type=\"checkbox\"]')).indexOf(checkbox);
+                // Only count non-dataview checkboxes for the index
+                const allCheckboxes = Array.from(document.querySelectorAll('#custom-preview input[type="checkbox"]'));
+                const normalCheckboxes = allCheckboxes.filter(cb => !cb.classList.contains('dataview'));
+                const targetIndex = normalCheckboxes.indexOf(checkbox);
+                
+                console.log(`🎯 Target checkbox index: ${targetIndex} of ${normalCheckboxes.length} normal checkboxes`);
                 
                 let found = false;
                 content = content.replace(taskRegex, (match, prefix, status, suffix) => {
                     if (checkboxIndex === targetIndex) {
                         found = true;
                         const newStatus = newCheckedState ? 'x' : ' ';
+                        console.log(`✏️ Updating checkbox ${checkboxIndex}: [${status}] → [${newStatus}]`);
                         checkboxIndex++;
                         return prefix + newStatus + suffix;
                     }
@@ -273,22 +299,48 @@ async function handleCheckboxClick(checkbox) {
                 });
                 
                 if (!found) {
+                    console.error('❌ Checkbox not found in content');
                     checkbox.checked = !checkbox.checked;
+                    window._checkboxSaveInProgress = false;
                     return;
                 }
                 
-                isCheckboxSaving = true;
-                await conn.send('WRITE', { path: currentPath, data: content });
+                // Save current scroll position BEFORE anything else
+                const preview = document.getElementById('custom-preview');
+                const scrollPos = preview ? preview.scrollTop : 0;
+                console.log(`📍 Saving scroll position BEFORE save: ${scrollPos}`);
+                window._savedScrollPosition = scrollPos;
+                window._isCheckboxUpdate = true;
                 
-                setTimeout(() => {
-                    isCheckboxSaving = false;
-                }, 100);
+                console.log('💾 Saving checkbox state...');
+                await conn.send('SAVE_FILE', { path: currentPath, data: content });
+                
+                console.log('✅ Checkbox saved, refreshing preview...');
+                
+                // If in preview mode, refresh the rendered view (same as YAML saves)
+                if (isReadingMode) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await conn.send('GET_RENDERED_FILE', { path: currentPath });
+                } else {
+                    // In edit mode, update the editor
+                    if (easyMDE) {
+                        const cursorPos = easyMDE.codemirror.getCursor();
+                        easyMDE.value(content);
+                        easyMDE.codemirror.setCursor(cursorPos);
+                    }
+                }
+                
+                console.log('🎉 Checkbox update complete!');
+                
             } catch (err) {
-                console.error('Failed to save checkbox state:', err);
+                console.error('❌ Failed to save checkbox state:', err);
                 checkbox.checked = !checkbox.checked;
-                isCheckboxSaving = false;
+            } finally {
+                window._checkboxSaveInProgress = false;
             }
         }
+    } else {
+        window._checkboxSaveInProgress = false;
     }
 }
 
@@ -394,9 +446,9 @@ function handleMessage(msg) {
         easyMDE.value(content);
         easyMDE.codemirror.clearHistory();
         
-        // If this is during YAML save, just load content and return
-        if (window._yamlSaveInProgress) {
-            console.log('⏸️ YAML save in progress, content loaded for processing');
+        // If this is during YAML save or checkbox save, just load content and return
+        if (window._yamlSaveInProgress || window._checkboxSaveInProgress) {
+            console.log('⏸️ Save in progress, content loaded for processing');
             return;
         }
         
@@ -422,9 +474,10 @@ function handleMessage(msg) {
     }
     
     if (msg.type === 'RENDERED_FILE') {
-        if (isCheckboxSaving) {
-            console.log('⏭️ Skipping RENDERED_FILE during checkbox save');
-            return;
+        // Check if this is a checkbox-triggered re-render (we have a saved scroll position)
+        const isCheckboxUpdate = window._savedScrollPosition !== undefined;
+        if (isCheckboxUpdate) {
+            console.log('📍 RENDERED_FILE from checkbox update, will preserve scroll');
         }
         
         if (msg.data.files) {
@@ -453,7 +506,12 @@ function handleMessage(msg) {
         }
         
         renderYamlProperties(msg.data.yaml, msg.meta?.path || msg.path);
-        renderPreview(msg.data.html);
+        
+        // Check if we should preserve scroll position (set by checkbox handler)
+        const preserveScroll = window._isCheckboxUpdate === true;
+        console.log(`🔍 RENDERED_FILE: preserveScroll=${preserveScroll}, savedPos=${window._savedScrollPosition}`);
+        
+        renderPreview(msg.data.html, preserveScroll);
         renderBacklinks(msg.data.backlinks || []);
         const renderedPath = msg.meta?.path || msg.path;
         if (panelState.graph && renderedPath) renderLocalGraph(renderedPath);
@@ -918,6 +976,19 @@ function applyThemeToElements() {
         });
     }
     
+    // === TAGS IN CONTENT ===
+    
+    // Style tag links to match properties area - use same variables as .yaml-tag-chip
+    if (tagBg || tagColor) {
+        document.querySelectorAll('#custom-preview a[href^="#"]').forEach(el => {
+            if (tagBg) el.style.setProperty('background-color', tagBg, 'important');
+            if (tagColor) el.style.setProperty('color', tagColor, 'important');
+            el.style.setProperty('padding', '2px 8px', 'important');
+            el.style.setProperty('border-radius', '12px', 'important');
+            el.style.setProperty('display', 'inline-flex', 'important');
+        });
+    }
+    
     // === GRAPH CANVAS ===
     
     const graphCanvas = document.querySelector('#graph-canvas canvas');
@@ -933,10 +1004,18 @@ function applyThemeToElements() {
 
 /**
  * Render preview HTML
+ * @param {string} html - The HTML to render
+ * @param {boolean} preserveScroll - Whether to preserve scroll position (for checkbox updates)
  */
-function renderPreview(html) {
+function renderPreview(html, preserveScroll = false) {
     const preview = document.getElementById('custom-preview');
     const loading = document.getElementById('preview-loading');
+    
+    // Get saved scroll position (set by checkbox handler before re-render)
+    const savedScrollTop = window._savedScrollPosition || 0;
+    if (preserveScroll) {
+        console.log(`📍 Using saved scroll position: ${savedScrollTop}`);
+    }
     
     if (html) {
         preview.innerHTML = html;
@@ -959,6 +1038,12 @@ function renderPreview(html) {
         
         // Add copy buttons to code blocks
         addCopyButtons(preview);
+        
+        // Add read-only warning banners to dataview containers with task checkboxes
+        addDataviewTaskWarnings(preview);
+        
+        // Inject callout icons
+        addCalloutIcons(preview);
     }
     
     // Hide loading spinner and show preview
@@ -967,8 +1052,23 @@ function renderPreview(html) {
     }
     if (preview) {
         preview.style.display = 'block';
-        // Reset scroll position to top when loading new content
-        preview.scrollTop = 0;
+        // Reset scroll position to top when loading new content (unless preserving for checkbox update)
+        if (preserveScroll && savedScrollTop > 0) {
+            // Use requestAnimationFrame to ensure DOM is fully rendered before scrolling
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    preview.scrollTop = savedScrollTop;
+                    console.log(`✅ Restored scroll position to: ${savedScrollTop}, actual: ${preview.scrollTop}`);
+                    // Clear the saved position and flag
+                    delete window._savedScrollPosition;
+                    delete window._isCheckboxUpdate;
+                });
+            });
+        } else {
+            preview.scrollTop = 0;
+            console.log(`📍 Reset scroll to top (not a checkbox update)`);
+            delete window._isCheckboxUpdate;
+        }
     }
     
     console.log('✅ Preview rendered and visible');
@@ -990,7 +1090,7 @@ function addCopyButtons(container) {
         const copyBtn = document.createElement('button');
         copyBtn.className = 'code-copy-btn';
         copyBtn.innerHTML = icons.copy;
-        copyBtn.style.cssText = 'position: absolute !important; top: 8px !important; right: 8px !important; background: rgba(32,32,32,0.9) !important; color: white !important; padding: 6px 10px !important; border: 1px solid #444 !important; border-radius: 4px !important; cursor: pointer !important; z-index: 999 !important; display: block !important; opacity: 1 !important; visibility: visible !important;';
+        copyBtn.style.cssText = 'position: absolute !important; top: 8px !important; right: 8px !important; padding: 6px 10px !important; border-radius: 4px !important; cursor: pointer !important; z-index: 999 !important; display: block !important;';
         copyBtn.onclick = () => {
             const code = pre.querySelector('code')?.textContent || pre.textContent;
             navigator.clipboard.writeText(code).then(() => {
@@ -1003,6 +1103,66 @@ function addCopyButtons(container) {
             });
         };
         wrapper.appendChild(copyBtn);
+    });
+}
+
+/**
+ * Add read-only warning banners to dataview containers with task checkboxes
+ */
+function addDataviewTaskWarnings(container) {
+    // Only target top-level dataview containers to avoid duplicates
+    container.querySelectorAll('.block-language-dataview').forEach(dataviewContainer => {
+        // Check if this dataview contains task checkboxes
+        const hasTaskCheckboxes = dataviewContainer.querySelector('input[type="checkbox"].task-list-item-checkbox');
+        
+        if (hasTaskCheckboxes && !dataviewContainer.querySelector('.dataview-task-warning')) {
+            const banner = document.createElement('div');
+            banner.className = 'dataview-task-warning';
+            banner.innerHTML = `
+                <svg viewBox="0 0 24 24" width="16" height="16" style="display: inline-block; vertical-align: middle; margin-right: 6px;">
+                    <path fill="currentColor" d="M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z" />
+                </svg>
+                <span>Tasks in this dataview are read-only. Complete tasks in the source files to update them here.</span>
+            `;
+            
+            // Insert banner at the top of the dataview container
+            dataviewContainer.insertBefore(banner, dataviewContainer.firstChild);
+        }
+    });
+}
+
+/**
+ * Inject SVG icons into callout elements (Lucide icons matching Obsidian)
+ */
+function addCalloutIcons(container) {
+    const calloutIcons = {
+        info: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 16v-4M12 8h.01"/>',
+        tip: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 2v1m0 18v1M4.22 4.22l.707.707m12.728 12.728.707.707M2 12h1m18 0h1M4.22 19.78l.707-.707M18.36 5.64l.707-.707M9 16v5h6v-5m-1-9V3h-2v4"/>',
+        warning: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 9v4m0 4h.01"/>',
+        danger: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 9v4m0 4h.01"/>',
+        error: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m15 9-6 6m0-6 6 6"/>',
+        note: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 2v6h6"/>',
+        success: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5"/>',
+        check: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5"/>',
+        quote: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/>',
+        example: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 9h6M9 15h6"/>',
+        question: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 17h.01"/>',
+        abstract: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 9h6M9 15h6"/>',
+        todo: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 8v4l2 2"/>',
+        bug: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m8 2 1.88 1.88M14.12 3.88 16 2M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5m3.53 8H3m15.53-4C19.4 8.8 21 7.1 21 5m-2.47 4H21m-2.47 4H21"/>',
+        failure: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m15 9-6 6m0-6 6 6"/>'
+    };
+
+    container.querySelectorAll('.callout').forEach(callout => {
+        const type = callout.getAttribute('data-callout') || 'note';
+        const iconSvg = callout.querySelector('.callout-icon svg');
+        
+        if (iconSvg && !iconSvg.hasChildNodes()) {
+            const iconPath = calloutIcons[type] || calloutIcons['note'];
+            iconSvg.setAttribute('viewBox', '0 0 24 24');
+            iconSvg.innerHTML = iconPath;
+            iconSvg.style.display = 'block';
+        }
     });
 }
 

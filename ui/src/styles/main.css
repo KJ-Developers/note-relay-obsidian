@@ -737,6 +737,25 @@ a {
     text-decoration: none;
 }
 
+/* Tag styling in note content */
+#custom-preview a[href^="#"] {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px !important;
+    background: var(--interactive-accent) !important;
+    color: white !important;
+    border-radius: 12px !important;
+    font-size: 12px !important;
+    font-weight: 500;
+    transition: opacity 0.15s;
+    text-decoration: none !important;
+}
+
+#custom-preview a[href^="#"]:hover {
+    opacity: 0.9 !important;
+}
+
 /* Dataview & Markdown Table Styles */
 #custom-preview table {
     border-collapse: collapse;
@@ -769,6 +788,49 @@ a {
 #custom-preview ul.contains-task-list {
     list-style: none;
     padding-left: 0;
+}
+
+#custom-preview input.task-list-item-checkbox,
+#custom-preview input.dataview.task-list-item-checkbox,
+#custom-preview .dataview input[type="checkbox"] {
+    -webkit-appearance: checkbox !important;
+    -moz-appearance: checkbox !important;
+    appearance: checkbox !important;
+    width: 18px !important;
+    height: 18px !important;
+    margin: 0 8px 0 0 !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+    accent-color: var(--interactive-accent) !important;
+    vertical-align: middle !important;
+    display: inline-block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    position: relative !important;
+    flex-shrink: 0 !important;
+}
+
+/* Dataview task warning banner */
+.dataview-task-warning {
+    padding: 10px 14px;
+    margin: 0 0 12px 0;
+    border-left: 4px solid #f59e0b;
+    border-radius: 4px;
+    background-color: rgba(245, 158, 11, 0.1);
+    color: var(--text-normal);
+    font-size: 13px;
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+}
+
+.dataview-task-warning svg {
+    color: #f59e0b;
+    flex-shrink: 0;
+}
+
+.dataview-task-warning span {
+    flex: 1;
 }
 
 /* Callouts */
@@ -871,7 +933,7 @@ a {
 }
 
 #custom-preview .copy-to-clipboard-button,
-#custom-preview button[class*="copy"] {
+#custom-preview .copy-code-button {
     display: none !important;
 }
 
@@ -888,14 +950,14 @@ a {
     position: absolute;
     top: 8px;
     right: 8px;
-    background: rgba(32, 32, 32, 0.9);
-    border: 1px solid var(--background-modifier-border);
-    color: var(--text-muted);
-    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    color: white;
+    padding: 6px 8px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 13px;
-    opacity: 1;
+    opacity: 0.8;
     transition: all 0.2s;
     z-index: 10;
     display: flex;
@@ -903,13 +965,21 @@ a {
     gap: 4px;
 }
 
+#custom-preview .code-copy-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: white;
+}
+
 #custom-preview .code-block-wrapper:hover .code-copy-btn {
     opacity: 1;
 }
 
 #custom-preview .code-copy-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    opacity: 1;
+    border-color: var(--interactive-accent);
 }
 
 #custom-preview .code-copy-btn.copied {
