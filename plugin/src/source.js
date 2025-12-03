@@ -11,6 +11,9 @@ const cors = require('cors');
 const { readFileSync } = require('fs');
 const { join } = require('path');
 
+// Analytics telemetry service
+import telemetryService from './telemetry';
+
 const SUPABASE_URL = 'https://upstfmjkzrrshiprdoie.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwc3RmbWprenJyc2hpcHJkb2llIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4NDUxNDIsImV4cCI6MjA3OTQyMTE0Mn0.rJCvxQomRogp-9i9Uo2pK-mXpIjn0oyISivYGAifZ4s';
 const API_BASE_URL = 'https://noterelay.io';
@@ -28,7 +31,9 @@ const DEFAULT_SETTINGS = {
   userEmail: '', // User's email address (subscription validation)
   masterPasswordHash: '', // Owner's override password
   vaultId: '', // Unique vault identifier (auto-generated)
-  guestList: [] // [{ userId, email, passHash, mode: 'rw'|'ro', label, status: 'pending'|'verified' }]
+  guestList: [], // [{ userId, email, passHash, mode: 'rw'|'ro', label, status: 'pending'|'verified' }]
+  // ANALYTICS
+  enableAnalytics: true // Share anonymous usage statistics
 };
 
 async function hashString(str) {
@@ -53,6 +58,12 @@ class MicroServer extends obsidian.Plugin {
       console.log('Generated new vaultId:', this.settings.vaultId);
     }
     console.log('Plugin ID:', this.pluginId);
+    
+    // Initialize telemetry service
+    if (this.settings.enableAnalytics && this.settings.vaultId) {
+      telemetryService.init(this.settings.vaultId, true);
+      telemetryService.recordSessionStart('lan'); // Initial session on plugin load
+    }
     
     let localId = window.localStorage.getItem('portal-device-id');
     if (!localId) {
@@ -485,6 +496,12 @@ class MicroServer extends obsidian.Plugin {
 
   onunload() {
     this.disconnectSignaling();
+    
+    // Flush telemetry before shutdown
+    if (this.settings.enableAnalytics) {
+      telemetryService.recordSessionEnd();
+      telemetryService.flush();
+    }
     
     // Close Express server
     if (this.expressServer) {
@@ -991,6 +1008,12 @@ class MicroServer extends obsidian.Plugin {
         }
         
         await this.app.vault.modify(file, msg.data);
+        
+        // Record sync event
+        if (this.settings.enableAnalytics) {
+          telemetryService.recordSync(msg.data.length);
+        }
+        
         sendCallback('SAVED', { path: safePath });
         new obsidian.Notice(`Saved: ${safePath}`);
         return;
@@ -1288,6 +1311,12 @@ class MicroServer extends obsidian.Plugin {
     
     peer.on('connect', () => {
       this.statusBar.setText('Portal: Verifying...');
+      
+      // Record WebRTC session start
+      if (this.settings.enableAnalytics) {
+        const network = 'cloud'; // WebRTC connections are remote
+        telemetryService.recordSessionStart(network);
+      }
     });
     
     peer.on('data', async (raw) => {
@@ -1461,11 +1490,21 @@ class MicroServer extends obsidian.Plugin {
       new obsidian.Notice('Client Disconnected');
       this.statusBar.setText('Portal: Active');
       this.statusBar.style.color = '';
+      
+      // Record WebRTC session end
+      if (this.settings.enableAnalytics) {
+        telemetryService.recordSessionEnd();
+      }
     });
     
     peer.on('error', (err) => {
       console.error('Peer error:', err);
       this.statusBar.setText('Portal: Error');
+      
+      // Record error event
+      if (this.settings.enableAnalytics) {
+        telemetryService.recordError('webrtc_error', err.message || 'Unknown WebRTC error');
+      }
     });
     
     peer.signal(offerSignal);
@@ -1935,6 +1974,28 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.corsAllowedOrigins = value;
           await this.plugin.saveSettings();
+        }));
+
+    // Analytics Privacy Settings
+    container.createEl('h3', { text: 'Privacy & Analytics', cls: 'setting-item-heading' });
+    
+    new obsidian.Setting(container)
+      .setName('Share Anonymous Usage Statistics')
+      .setDesc('Help improve Note Relay by sharing basic usage data (event counts, OS, network type). No vault content or file names are tracked.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableAnalytics ?? true)
+        .onChange(async (value) => {
+          this.plugin.settings.enableAnalytics = value;
+          await this.plugin.saveSettings();
+          
+          // Reinitialize telemetry service
+          if (value && this.plugin.settings.vaultId) {
+            telemetryService.init(this.plugin.settings.vaultId, true);
+            new obsidian.Notice('Analytics enabled');
+          } else {
+            telemetryService.destroy();
+            new obsidian.Notice('Analytics disabled');
+          }
         }));
 
   }
