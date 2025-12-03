@@ -60,10 +60,14 @@ class MicroServer extends obsidian.Plugin {
     console.log('Plugin ID:', this.pluginId);
     
     // Initialize telemetry service
-    // PRIORITY: Use dbVaultId (server ID) if available, fallback to local vaultId
-    if (this.settings.enableAnalytics && (this.settings.dbVaultId || this.settings.vaultId)) {
-      telemetryService.init(this.settings.dbVaultId || this.settings.vaultId, true);
+    // STRICT GATING: Only enable analytics for registered users (dbVaultId present)
+    // No registration = No telemetry (no local UUID usage)
+    if (this.settings.enableAnalytics && this.settings.dbVaultId) {
+      telemetryService.init(this.settings.dbVaultId, true);
       telemetryService.recordSessionStart('lan'); // Initial session on plugin load
+      console.log('[Telemetry] Initialized for registered vault:', this.settings.dbVaultId);
+    } else if (!this.settings.dbVaultId) {
+      console.log('[Telemetry] Disabled - vault not registered');
     }
     
     let localId = window.localStorage.getItem('portal-device-id');
@@ -585,13 +589,16 @@ class MicroServer extends obsidian.Plugin {
         // Save the database vault ID for guest management
         if (result.vaultId) {
           this.settings.dbVaultId = result.vaultId;
+          
+          // AUTO-ENABLE: Registration unlocks analytics (The Teaser)
+          this.settings.enableAnalytics = true;
           await this.saveSettings();
           
-          // CRITICAL: Switch telemetry to official database ID immediately
-          if (this.settings.enableAnalytics) {
-            telemetryService.updateVaultId(this.settings.dbVaultId);
-            console.log('[Telemetry] Switched to database vault ID:', this.settings.dbVaultId);
-          }
+          // Start telemetry immediately with database ID
+          telemetryService.init(this.settings.dbVaultId, true);
+          telemetryService.recordSessionStart('lan');
+          console.log('[Telemetry] Auto-enabled for registered vault:', this.settings.dbVaultId);
+          new obsidian.Notice('Analytics enabled - view your stats at noterelay.io/dashboard');
         }
         
         this.startHeartbeat();
@@ -1986,24 +1993,39 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     // Analytics Privacy Settings
     container.createEl('h3', { text: 'Privacy & Analytics', cls: 'setting-item-heading' });
     
-    new obsidian.Setting(container)
-      .setName('Share Anonymous Usage Statistics')
-      .setDesc('Help improve Note Relay by sharing basic usage data (event counts, OS, network type). No vault content or file names are tracked.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.enableAnalytics ?? true)
-        .onChange(async (value) => {
-          this.plugin.settings.enableAnalytics = value;
-          await this.plugin.saveSettings();
-          
-          // Reinitialize telemetry service
-          if (value && (this.plugin.settings.dbVaultId || this.plugin.settings.vaultId)) {
-            telemetryService.init(this.plugin.settings.dbVaultId || this.plugin.settings.vaultId, true);
-            new obsidian.Notice('Analytics enabled');
-          } else {
-            telemetryService.destroy();
-            new obsidian.Notice('Analytics disabled');
-          }
-        }));
+    // Analytics toggle - only available for registered users
+    const analyticsToggle = new obsidian.Setting(container)
+      .setName('Share Anonymous Usage Statistics');
+    
+    if (!this.plugin.settings.dbVaultId) {
+      // Not registered - disable toggle and show registration requirement
+      analyticsToggle
+        .setDesc('📧 Register your vault (provide email above) to enable analytics and view your stats on the dashboard.')
+        .addToggle(toggle => toggle
+          .setValue(false)
+          .setDisabled(true)
+        );
+    } else {
+      // Registered - show normal toggle
+      analyticsToggle
+        .setDesc('Help improve Note Relay by sharing basic usage data (event counts, OS, network type). No vault content or file names are tracked.')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.enableAnalytics ?? true)
+          .onChange(async (value) => {
+            this.plugin.settings.enableAnalytics = value;
+            await this.plugin.saveSettings();
+            
+            // Reinitialize telemetry service (registered users only)
+            if (value && this.plugin.settings.dbVaultId) {
+              telemetryService.init(this.plugin.settings.dbVaultId, true);
+              new obsidian.Notice('Analytics enabled');
+            } else {
+              telemetryService.destroy();
+              new obsidian.Notice('Analytics disabled');
+            }
+          })
+        );
+    }
 
   }
   
