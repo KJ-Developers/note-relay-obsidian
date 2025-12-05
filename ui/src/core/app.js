@@ -3,7 +3,7 @@
  * Central state management and module coordination
  */
 
-import VaultConnection from './connection.js';
+import LocalConnection from './connection-local.js';
 import { processFileData, renderNode, prepareList } from '../utils/fileTree.js';
 import { b64toBlob, getMimeType } from '../utils/helpers.js';
 import { initEditor, loadEditorContent, getEditorContent, getEditor } from '../ui/editor.js';
@@ -100,8 +100,8 @@ export function initApp() {
     console.log('🚀 Note Relay V2 Bundle Loaded - Build: Production');
     console.log('✅ Initializing Note Relay UI');
 
-    // Initialize connection
-    conn = new VaultConnection();
+    // Initialize connection (local HTTP only)
+    conn = new LocalConnection();
 
     // Load saved panel state
     const savedPanels = localStorage.getItem('panelState');
