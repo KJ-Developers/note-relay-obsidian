@@ -2002,16 +2002,29 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
         t.setValue(this.plugin.settings.userEmail || '');
         t.inputEl.type = 'email';
         t.onChange(async (value) => {
+          // Update in-memory setting only (no display refresh to prevent focus loss)
           this.plugin.settings.userEmail = value.trim().toLowerCase();
           await this.plugin.saveSettings();
           
           if (!value) {
             this.plugin.disconnectSignaling();
           }
-          // Trigger re-render to update analytics toggle state
-          this.display();
+          // DO NOT call this.display() here - it destroys the input element
         });
-      });
+      })
+      .addButton((b) => b
+        .setButtonText('Connect')
+        .setCta()
+        .onClick(async () => {
+          if (this.plugin.settings.userEmail) {
+            await this.plugin.saveSettings();
+            new obsidian.Notice('✅ Account connected - Remote features unlocked');
+            this.display(); // NOW refresh to unlock tabs
+          } else {
+            new obsidian.Notice('Please enter your email address');
+          }
+        })
+      );
     
     // Add Disconnect button if email is set
     if (this.plugin.settings.userEmail) {
