@@ -59,6 +59,18 @@ class MicroServer extends obsidian.Plugin {
     }
     console.log('Plugin ID:', this.pluginId);
     
+    // TRINITY PROTOCOL: Generate Machine ID (Node ID)
+    // This stays local (localStorage) and does NOT sync via Obsidian Sync
+    // Purpose: Distinguish different devices running the same vault
+    let nodeId = window.localStorage.getItem('note-relay-node-id');
+    if (!nodeId) {
+      nodeId = crypto.randomUUID();
+      window.localStorage.setItem('note-relay-node-id', nodeId);
+      console.log('Generated new Machine ID (Node ID):', nodeId);
+    }
+    this.nodeId = nodeId;
+    console.log('Machine Identity:', this.nodeId);
+    
     // Initialize telemetry service
     // STRICT GATING: Only enable analytics for registered users (dbVaultId present)
     // No registration = No telemetry (no local UUID usage)
@@ -569,7 +581,9 @@ class MicroServer extends obsidian.Plugin {
           vaultId: this.settings.vaultId,
           signalId: this.pluginId,
           vaultName: this.app.vault.getName(),
-          hostname: os.hostname()
+          hostname: os.hostname(),
+          nodeId: this.nodeId,           // Machine ID (Trinity Protocol)
+          machineName: os.hostname()     // User-friendly machine identifier
         })
       });
 
