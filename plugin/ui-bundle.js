@@ -1,12 +1,11 @@
 (function() {
   "use strict";
-  const SUPABASE_URL = "https://upstfmjkzrrshiprdoie.supabase.co";
-  const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwc3RmbWprenJyc2hpcHJkb2llIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4NDUxNDIsImV4cCI6MjA3OTQyMTE0Mn0.rJCvxQomRogp-9i9Uo2pK-mXpIjn0oyISivYGAifZ4s";
   let supabase = null;
+  let supabaseCredentials = null;
   async function initSupabase() {
-    if (!supabase) {
+    if (!supabase && supabaseCredentials) {
       const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
-      supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+      supabase = createClient(supabaseCredentials.url, supabaseCredentials.anonKey);
     }
     return supabase;
   }
@@ -126,19 +125,44 @@
      * Remote WebRTC connection strategy
      */
     async connectRemote(password) {
-      var _a;
       const selectedVault = sessionStorage.getItem("selectedVault");
       if (!selectedVault) {
         throw new Error("No vault selected");
       }
+      let vaultData;
       try {
-        const vaultData = JSON.parse(selectedVault);
+        vaultData = JSON.parse(selectedVault);
         this.CLIENT_ID = vaultData.signalId;
         console.log("🔑 Vault Signal ID (CLIENT_ID):", this.CLIENT_ID);
       } catch (error) {
         throw new Error("Invalid vault configuration");
       }
       this.password = password;
+      this.onStatusUpdate("Initializing connection...");
+      try {
+        const initResponse = await fetch("https://noterelay.io/api/plugin-init", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            email: vaultData.userEmail || window.userEmail,
+            // From plugin settings
+            vaultId: vaultData.id
+          })
+        });
+        if (!initResponse.ok) {
+          const error = await initResponse.json();
+          throw new Error(error.error || "Failed to initialize connection");
+        }
+        const initData = await initResponse.json();
+        supabaseCredentials = initData.supabase;
+        this.iceServers = initData.iceServers;
+        console.log("✅ Connection credentials obtained");
+      } catch (err) {
+        this.onStatusUpdate("Unable to reach connection service. Check internet connection.");
+        throw err;
+      }
       this.onStatusUpdate("Establishing secure end-to-end encryption...");
       try {
         await this.attemptConnection(false);
@@ -149,15 +173,8 @@
         this.onStatusUpdate("Strict firewall detected. Switching to secure relay mode...");
         await new Promise((r2) => setTimeout(r2, 1500));
         this.onStatusUpdate("Routing through secure private tunnel...");
-        const sb = await initSupabase();
-        const { data } = await sb.auth.getSession();
-        const token = (_a = data == null ? void 0 : data.session) == null ? void 0 : _a.access_token;
-        if (!token) {
-          this.onStatusUpdate("Unable to authenticate. Please login again.");
-          throw new Error("Authentication required");
-        }
         try {
-          await this.attemptConnection(true, token);
+          await this.attemptConnection(true);
         } catch (finalErr) {
           this.onStatusUpdate("Connection failed. Is the vault online?");
           throw finalErr;
@@ -168,47 +185,20 @@
     /**
      * Attempt WebRTC connection with given ICE configuration
      */
-    async attemptConnection(useTurn, token = null) {
+    async attemptConnection(useTurn) {
       return new Promise(async (resolve, reject) => {
         if (this.peer) {
           this.peer.destroy();
           this.peer = null;
         }
-        let iceServers = [
+        let iceServers = this.iceServers || [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" }
         ];
-        if (useTurn && token) {
-          try {
-            const turnResponse = await fetch("/api/turn-credentials", {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json"
-              }
-            });
-            if (turnResponse.status === 401 || turnResponse.status === 403) {
-              this.onStatusUpdate("Session expired. Please log in again.");
-              reject(new Error("Authentication required"));
-              return;
-            }
-            if (!turnResponse.ok) {
-              throw new Error(`TURN API returned ${turnResponse.status}`);
-            }
-            const turnData = await turnResponse.json();
-            if (turnData.iceServers) {
-              iceServers = turnData.iceServers;
-              console.log("✅ TURN credentials obtained");
-            }
-          } catch (err) {
-            if (err.message === "Authentication required") {
-              reject(err);
-            } else {
-              this.onStatusUpdate("Unable to reach secure relay. Check internet connection.");
-              reject(err);
-            }
-            return;
-          }
+        if (!useTurn) {
+          iceServers = iceServers.filter(
+            (server) => server.urls.includes("stun:")
+          );
         }
         await this.initPeer(this.password, iceServers, useTurn, resolve, reject);
       });
@@ -32218,54 +32208,34 @@
       localStorage.setItem("yamlCollapsed", isCollapsed);
     }
   };
-  window.togglePluginView = async function() {
-    var _a;
-    console.log("🎯 togglePluginView called!", { currentPath, hasConn: !!conn });
-    if (!currentPath || !conn) {
-      console.error("❌ togglePluginView failed: missing currentPath or conn", { currentPath, conn });
-      return;
-    }
-    try {
-      const response = await conn.send("OPEN_FILE", { path: currentPath });
-      const data = response.data || response;
-      if (data.renderedHTML && data.renderedHTML.length > 0) {
-        console.log("🎨 ========== WEB UI RECEIVED DATA ==========");
-        console.log("📏 renderedHTML length:", data.renderedHTML.length);
-        console.log("📝 renderedHTML preview (first 1000 chars):", data.renderedHTML.substring(0, 1e3));
-        console.log("🎨 pluginCSS exists:", !!data.pluginCSS);
-        console.log("🎨 pluginCSS length:", ((_a = data.pluginCSS) == null ? void 0 : _a.length) || 0);
-        if (data.pluginCSS) {
-          console.log("🎨 pluginCSS preview (first 2000 chars):", data.pluginCSS.substring(0, 2e3));
-          console.log("🎨 CSS rule count:", (data.pluginCSS.match(/\{/g) || []).length);
+  function renderPluginData(data) {
+    console.log("🎨 ========== WEB UI RECEIVED DATA ==========");
+    console.log("📏 renderedHTML length:", data.renderedHTML ? data.renderedHTML.length : 0);
+    console.log("🎨 pluginCSS exists:", !!data.pluginCSS);
+    const preview = document.getElementById("custom-preview");
+    if (preview && data.renderedHTML) {
+      let pluginName = "Obsidian Plugin";
+      if (data.viewType === "kanban") {
+        pluginName = "Kanban Plugin by mgmeyers";
+      }
+      preview.innerHTML = `
+            <div style="padding: 0px;">
+                <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
+                    <strong>${pluginName}</strong>
+                    <span style="float: right; color: var(--text-muted);">Read-only view</span>
+                </div>
+                ${data.renderedHTML}
+            </div>
+        `;
+      if (data.pluginCSS) {
+        console.log("💉 Injecting plugin CSS into DOM...");
+        let pluginStyleTag = document.getElementById("plugin-styles");
+        if (!pluginStyleTag) {
+          pluginStyleTag = document.createElement("style");
+          pluginStyleTag.id = "plugin-styles";
+          document.head.appendChild(pluginStyleTag);
         }
-        console.log("🎨 ========== END RECEIVED DATA ==========");
-        const preview = document.getElementById("custom-preview");
-        if (preview) {
-          let pluginName = "Obsidian Plugin";
-          if (data.viewType === "kanban") {
-            pluginName = "Kanban Plugin by mgmeyers";
-          }
-          preview.innerHTML = `
-                    <div style="padding: 0px;">
-                        <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
-                            <strong>${pluginName}</strong>
-                            <span style="float: right; color: var(--text-muted);">Read-only view</span>
-                        </div>
-                        ${data.renderedHTML}
-                    </div>
-                `;
-          if (data.pluginCSS) {
-            console.log("💉 Injecting plugin CSS into DOM...");
-            let pluginStyleTag = document.getElementById("plugin-styles");
-            if (!pluginStyleTag) {
-              pluginStyleTag = document.createElement("style");
-              pluginStyleTag.id = "plugin-styles";
-              document.head.appendChild(pluginStyleTag);
-              console.log('✅ Created new <style id="plugin-styles"> tag');
-            } else {
-              console.log('♻️ Reusing existing <style id="plugin-styles"> tag');
-            }
-            const kanbanFallbackCSS = `
+        const kanbanFallbackCSS = `
 /* Kanban Horizontal Board Fallback Styles */
 .kanban-plugin__item-wrapper {
     padding: 4px !important;
@@ -32325,15 +32295,37 @@
     cursor: default !important;
 }
 `;
-            pluginStyleTag.textContent = data.pluginCSS + "\n" + kanbanFallbackCSS;
-            console.log("✅ CSS injected with fallback styles");
-            console.log("📏 Total CSS length:", pluginStyleTag.textContent.length);
+        pluginStyleTag.textContent = data.pluginCSS + "\n" + kanbanFallbackCSS;
+      }
+      setTimeout(() => applyThemeToElements(), 100);
+    }
+  }
+  window.togglePluginView = async function() {
+    console.log("🎯 togglePluginView called!", { currentPath, hasConn: !!conn });
+    if (!currentPath || !conn) {
+      console.error("❌ togglePluginView failed: missing currentPath or conn", { currentPath, conn });
+      return;
+    }
+    try {
+      const response = await conn.send("OPEN_FILE", { path: currentPath });
+      const data = response.data || response;
+      if (data.renderedHTML && data.renderedHTML.length > 0) {
+        renderPluginData(data);
+        const editorContainer = document.querySelector(".EasyMDEContainer");
+        if (editorContainer && editorContainer.style.display !== "none") {
+          isReadingMode = true;
+          const btn = document.getElementById("view-btn");
+          const preview = document.getElementById("custom-preview");
+          const loading = document.getElementById("preview-loading");
+          const saveBtn = document.getElementById("save-btn");
+          if (btn) {
+            btn.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+            btn.title = "Switch to Edit Mode";
           }
-          const editorContainer = document.querySelector(".EasyMDEContainer");
-          if (editorContainer && editorContainer.style.display !== "none") {
-            await toggleViewMode();
-          }
-          setTimeout(() => applyThemeToElements(), 100);
+          if (saveBtn) saveBtn.style.display = "none";
+          editorContainer.style.display = "none";
+          if (loading) loading.style.display = "none";
+          if (preview) preview.style.display = "block";
         }
         return;
       }
@@ -33277,7 +33269,22 @@ ${bodyContent}`;
       editorEl.style.display = "none";
       loading.style.display = "flex";
       preview.style.display = "none";
-      await conn.send("GET_RENDERED_FILE", { path: currentPath });
+      const response = await conn.send("OPEN_FILE", { path: currentPath });
+      if (response && response.data) {
+        const data = response.data;
+        if (data.renderedHTML) {
+          renderPluginData(data);
+          if (loading) loading.style.display = "none";
+          if (preview) preview.style.display = "block";
+        } else if (data.html) {
+          if (data.css) applyTheme(data.css);
+          currentYamlData = data.yaml;
+          renderYamlProperties(data.yaml);
+          renderPreview(data.html);
+          renderBacklinks(data.backlinks || []);
+          if (panelState.graph) renderLocalGraph(currentPath);
+        }
+      }
     } else {
       btn.innerHTML = '<i class="fa-regular fa-eye"></i>';
       btn.title = "Switch to Preview Mode";
