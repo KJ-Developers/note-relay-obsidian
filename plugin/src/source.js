@@ -2092,16 +2092,16 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
         }));
 
     // Analytics Privacy Settings
-    container.createEl('h3', { text: 'Privacy & Analytics', cls: 'setting-item-heading' });
+    container.createEl('h3', { text: '📊 Vault Insights', cls: 'setting-item-heading' });
     
     // Analytics toggle - only available for users with email linked
     const analyticsToggle = new obsidian.Setting(container)
-      .setName('Share Anonymous Usage Statistics');
+      .setName('Enable Usage Dashboard');
     
     if (!this.plugin.settings.userEmail) {
       // No email - disable toggle and show requirement
       analyticsToggle
-        .setDesc('📧 Link an account above to enable the Usage Dashboard and analytics.')
+        .setDesc('Link your account above to unlock your personal usage dashboard and help shape future features.')
         .addToggle(toggle => toggle
           .setValue(false)
           .setDisabled(true)
@@ -2109,7 +2109,7 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     } else {
       // Email linked - show normal toggle
       analyticsToggle
-        .setDesc('Help improve Note Relay by sharing basic usage data (event counts, OS, network type). No vault content or file names are tracked.')
+        .setDesc('Unlock your personal dashboard to track vault access and traffic trends. This anonymous data also helps us identify usage patterns to prioritize new features. (Strictly non-identifiable).')
         .addToggle(toggle => toggle
           .setValue(this.plugin.settings.enableAnalytics ?? true)
           .onChange(async (value) => {
