@@ -1149,27 +1149,53 @@ class MicroServer extends obsidian.Plugin {
         const workspace = this.app.workspace;
         let kanbanLeaf = workspace.getLeavesOfType('kanban')[0];
         
+        console.log('🔍 OPEN_FILE Debug:', {
+          detectedPlugin,
+          hasKanbanLeaf: !!kanbanLeaf,
+          allLeafTypes: workspace.getLeavesOfType('kanban').length,
+          allLeaves: this.app.workspace.getLeavesOfType('markdown').map(l => l.getViewState().type)
+        });
+        
         if (!kanbanLeaf) {
           // Try to open the file in a new tab to create the view
           try {
+            console.log('🔓 Attempting to open file in new leaf...');
             const newLeaf = workspace.getLeaf('tab');
             await newLeaf.openFile(file);
+            console.log('✅ File opened, view type:', newLeaf.getViewState().type);
             
             // Check if it's now a kanban view
             if (newLeaf.getViewState().type === 'kanban') {
               kanbanLeaf = newLeaf;
+              console.log('✅ Kanban view detected!');
+            } else {
+              console.warn('⚠️ View type is not kanban:', newLeaf.getViewState().type);
             }
           } catch (openError) {
-            console.error('Failed to open file:', openError);
+            console.error('❌ Failed to open file:', openError);
           }
         }
+        
+        console.log('🎯 Attempting to extract HTML, kanbanLeaf exists:', !!kanbanLeaf);
         
         // If we have a leaf, extract the rendered HTML
         if (kanbanLeaf) {
           const view = kanbanLeaf.view;
           
+          console.log('🔍 View check:', {
+            hasView: !!view,
+            hasContainerEl: !!view?.containerEl,
+            containerClasses: view?.containerEl?.className
+          });
+          
           if (view.containerEl) {
             const kanbanBoard = view.containerEl.querySelector('.kanban-plugin');
+            
+            console.log('🔍 Kanban board element:', {
+              found: !!kanbanBoard,
+              selector: '.kanban-plugin',
+              containerHTML: view.containerEl.innerHTML.substring(0, 500)
+            });
             
             if (kanbanBoard) {
               const capturedHTML = kanbanBoard.outerHTML;
@@ -1210,11 +1236,21 @@ class MicroServer extends obsidian.Plugin {
         }
         
         // If we got here, fall back to markdown rendering
+        console.warn('⚠️ Falling back to markdown rendering (no Kanban HTML captured)');
         
+        // Wrapper to ensure we return OPEN_FILE type even for fallback
+        const wrapperCallback = (type, data, meta) => {
+            if (type === 'RENDERED_FILE') {
+                sendCallback('OPEN_FILE', data, meta);
+            } else {
+                sendCallback(type, data, meta);
+            }
+        };
+
         this.processCommand({
           cmd: 'GET_RENDERED_FILE',
           path: safePath
-        }, sendCallback);
+        }, wrapperCallback);
         
         return;
       }

@@ -31168,7 +31168,6 @@
   let currentPath = null;
   let selectedFolderPath = "";
   let isReadingMode = false;
-  let isCheckboxSaving = false;
   let panelState = { graph: true, backlinks: true };
   let currentList = [];
   let renderedCount = 0;
@@ -31295,6 +31294,9 @@
     if (e2.target.type === "checkbox" && e2.target.closest("#custom-preview")) {
       e2.preventDefault();
       e2.stopPropagation();
+      if (e2.target.classList.contains("dataview")) {
+        return;
+      }
       await handleCheckboxClick(e2.target);
       return;
     }
@@ -31327,30 +31329,46 @@
       }
       return;
     }
+    if (e2.target.closest(".dataview-container") || e2.target.closest(".block-language-dataview")) {
+      e2.preventDefault();
+      return;
+    }
   }
   async function handleCheckboxClick(checkbox) {
     var _a, _b;
+    if (window._checkboxSaveInProgress) {
+      console.log("⏳ Checkbox save already in progress, skipping...");
+      checkbox.checked = !checkbox.checked;
+      return;
+    }
+    window._checkboxSaveInProgress = true;
     const newCheckedState = checkbox.checked;
     const listItem = checkbox.closest("li");
     if (listItem && currentPath) {
       const file = masterFileList.find((f2) => f2.path === currentPath);
       if (file) {
         try {
+          console.log("📝 Checkbox clicked, fetching file content...");
           const result = await conn.send("GET_FILE", { path: currentPath });
           let content = ((_a = result.data) == null ? void 0 : _a.data) || ((_b = result.data) == null ? void 0 : _b.content) || result.data;
           if (typeof content !== "string") {
             console.error("Content is not a string");
             checkbox.checked = !checkbox.checked;
+            window._checkboxSaveInProgress = false;
             return;
           }
           const taskRegex = /^(\s*[-*+]\s+\[)([xX\s])(\])/gm;
           let checkboxIndex = 0;
-          const targetIndex = Array.from(document.querySelectorAll('#custom-preview input[type="checkbox"]')).indexOf(checkbox);
+          const allCheckboxes = Array.from(document.querySelectorAll('#custom-preview input[type="checkbox"]'));
+          const normalCheckboxes = allCheckboxes.filter((cb) => !cb.classList.contains("dataview"));
+          const targetIndex = normalCheckboxes.indexOf(checkbox);
+          console.log(`🎯 Target checkbox index: ${targetIndex} of ${normalCheckboxes.length} normal checkboxes`);
           let found = false;
           content = content.replace(taskRegex, (match, prefix, status, suffix) => {
             if (checkboxIndex === targetIndex) {
               found = true;
               const newStatus = newCheckedState ? "x" : " ";
+              console.log(`✏️ Updating checkbox ${checkboxIndex}: [${status}] → [${newStatus}]`);
               checkboxIndex++;
               return prefix + newStatus + suffix;
             }
@@ -31358,20 +31376,39 @@
             return match;
           });
           if (!found) {
+            console.error("❌ Checkbox not found in content");
             checkbox.checked = !checkbox.checked;
+            window._checkboxSaveInProgress = false;
             return;
           }
-          isCheckboxSaving = true;
-          await conn.send("WRITE", { path: currentPath, data: content });
-          setTimeout(() => {
-            isCheckboxSaving = false;
-          }, 100);
+          const preview = document.getElementById("custom-preview");
+          const scrollPos = preview ? preview.scrollTop : 0;
+          console.log(`📍 Saving scroll position BEFORE save: ${scrollPos}`);
+          window._savedScrollPosition = scrollPos;
+          window._isCheckboxUpdate = true;
+          console.log("💾 Saving checkbox state...");
+          await conn.send("SAVE_FILE", { path: currentPath, data: content });
+          console.log("✅ Checkbox saved, refreshing preview...");
+          if (isReadingMode) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await conn.send("GET_RENDERED_FILE", { path: currentPath });
+          } else {
+            if (easyMDE) {
+              const cursorPos = easyMDE.codemirror.getCursor();
+              easyMDE.value(content);
+              easyMDE.codemirror.setCursor(cursorPos);
+            }
+          }
+          console.log("🎉 Checkbox update complete!");
         } catch (err) {
-          console.error("Failed to save checkbox state:", err);
+          console.error("❌ Failed to save checkbox state:", err);
           checkbox.checked = !checkbox.checked;
-          isCheckboxSaving = false;
+        } finally {
+          window._checkboxSaveInProgress = false;
         }
       }
+    } else {
+      window._checkboxSaveInProgress = false;
     }
   }
   async function connectToVault() {
@@ -31452,8 +31489,8 @@
       console.log("📄 Loading file:", filePath, "Current mode:", isReadingMode ? "READ" : "EDIT");
       easyMDE.value(content);
       easyMDE.codemirror.clearHistory();
-      if (window._yamlSaveInProgress) {
-        console.log("⏸️ YAML save in progress, content loaded for processing");
+      if (window._yamlSaveInProgress || window._checkboxSaveInProgress) {
+        console.log("⏸️ Save in progress, content loaded for processing");
         return;
       }
       if (isReadingMode) {
@@ -31471,9 +31508,9 @@
       return;
     }
     if (msg.type === "RENDERED_FILE") {
-      if (isCheckboxSaving) {
-        console.log("⏭️ Skipping RENDERED_FILE during checkbox save");
-        return;
+      const isCheckboxUpdate = window._savedScrollPosition !== void 0;
+      if (isCheckboxUpdate) {
+        console.log("📍 RENDERED_FILE from checkbox update, will preserve scroll");
       }
       if (msg.data.files) {
         const result = processFileData({ files: msg.data.files });
@@ -31495,7 +31532,9 @@
         }
       }
       renderYamlProperties(msg.data.yaml, ((_h = msg.meta) == null ? void 0 : _h.path) || msg.path);
-      renderPreview(msg.data.html);
+      const preserveScroll = window._isCheckboxUpdate === true;
+      console.log(`🔍 RENDERED_FILE: preserveScroll=${preserveScroll}, savedPos=${window._savedScrollPosition}`);
+      renderPreview(msg.data.html, preserveScroll);
       renderBacklinks(msg.data.backlinks || []);
       const renderedPath = ((_i = msg.meta) == null ? void 0 : _i.path) || msg.path;
       if (panelState.graph && renderedPath) renderLocalGraph(renderedPath);
@@ -31524,83 +31563,354 @@
     const secondaryBg = getComputedStyle(root2).getPropertyValue("--background-secondary").trim();
     const secondaryAltBg = getComputedStyle(root2).getPropertyValue("--background-secondary-alt").trim();
     const textNormal = getComputedStyle(root2).getPropertyValue("--text-normal").trim();
-    getComputedStyle(root2).getPropertyValue("--text-muted").trim();
-    console.log("🎨 Theme colors extracted:");
-    console.log("  primaryBg:", primaryBg);
-    console.log("  secondaryBg:", secondaryBg);
-    console.log("  textNormal:", textNormal);
+    const textMuted = getComputedStyle(root2).getPropertyValue("--text-muted").trim();
+    getComputedStyle(root2).getPropertyValue("--text-faint").trim();
+    const textAccent = getComputedStyle(root2).getPropertyValue("--text-accent").trim();
+    getComputedStyle(root2).getPropertyValue("--text-accent-hover").trim();
+    const borderColor = getComputedStyle(root2).getPropertyValue("--background-modifier-border").trim();
+    const hoverBg = getComputedStyle(root2).getPropertyValue("--background-modifier-hover").trim();
+    const interactiveAccent = getComputedStyle(root2).getPropertyValue("--interactive-accent").trim();
+    console.log("🎨 Applying comprehensive theme...");
+    console.log("Border color extracted:", borderColor);
+    console.log("Hover background extracted:", hoverBg);
+    if (borderColor) {
+      document.querySelectorAll("#sidebar, #pane-notes, #local-graph-container, #app-ribbon").forEach((el) => {
+        el.style.setProperty("border-right", `1px solid ${borderColor}`, "important");
+      });
+      document.querySelectorAll(".brand-header, .explorer-toolbar, .context-header, #editor-header, .pane-header, .search-box-container").forEach((el) => {
+        el.style.setProperty("border-bottom", `1px solid ${borderColor}`, "important");
+      });
+      document.querySelectorAll("#context-panel").forEach((el) => {
+        el.style.setProperty("border-top", `1px solid ${borderColor}`, "important");
+      });
+    }
     if (primaryBg) {
-      const primaryAreas = [
-        "body",
-        "#content-area",
-        "#main-content",
-        "#custom-preview",
-        "#graph-container",
-        "#graph-view",
-        ".graph-view",
-        "#yaml-properties",
-        "#graph-canvas",
-        "#local-graph-container"
-      ];
-      primaryAreas.forEach((selector2) => {
-        const elements = document.querySelectorAll(selector2);
-        console.log(`  Applying to ${selector2}: ${elements.length} elements`);
-        elements.forEach((el) => {
-          el.style.setProperty("background", primaryBg, "important");
-          if (textNormal && selector2 !== "body") {
-            el.style.setProperty("color", textNormal, "important");
-          }
-        });
+      document.querySelectorAll("body, #content-area, #main-content, #custom-preview, #graph-canvas, #local-graph-container").forEach((el) => {
+        el.style.setProperty("background", primaryBg, "important");
       });
     }
     if (secondaryBg) {
-      const secondaryAreas = [
-        "#sidebar",
-        "#sidebar-tree-area",
-        "#note-list-container",
-        ".pane-header"
-      ];
-      secondaryAreas.forEach((selector2) => {
-        const elements = document.querySelectorAll(selector2);
-        console.log(`  Applying to ${selector2}: ${elements.length} elements`);
-        elements.forEach((el) => {
-          el.style.setProperty("background", secondaryBg, "important");
-        });
+      document.querySelectorAll("#sidebar, #sidebar-tree-area, #note-list-container, .pane-header, .explorer-toolbar").forEach((el) => {
+        el.style.setProperty("background", secondaryBg, "important");
       });
     }
-    if (primaryBg && textNormal) {
-      const propsElements = document.querySelectorAll(".property-item, .property-key, .property-value");
-      console.log("  Applying to properties:", propsElements.length, "elements");
-      propsElements.forEach((el) => {
-        el.style.setProperty("background-color", secondaryAltBg || secondaryBg, "important");
+    if (textNormal) {
+      document.querySelectorAll(".tree-text, .note-card, .note-title, #sidebar-tree-area, #note-list-container, .brand-header, #filename").forEach((el) => {
         el.style.setProperty("color", textNormal, "important");
       });
     }
-    const tagBg = getComputedStyle(root2).getPropertyValue("--tag-background").trim() || getComputedStyle(root2).getPropertyValue("--text-accent-hover").trim() || secondaryAltBg;
-    const tagColor = getComputedStyle(root2).getPropertyValue("--tag-color").trim() || getComputedStyle(root2).getPropertyValue("--text-accent").trim();
-    console.log("  Tag colors - bg:", tagBg, "color:", tagColor);
+    if (textMuted && textNormal && hoverBg) {
+      document.querySelectorAll(".nav-btn, .header-btn, .ribbon-btn").forEach((btn) => {
+        btn.style.setProperty("color", textMuted, "important");
+        btn.addEventListener("mouseenter", () => {
+          btn.style.setProperty("color", textNormal, "important");
+          btn.style.setProperty("background-color", hoverBg, "important");
+        });
+        btn.addEventListener("mouseleave", () => {
+          if (!btn.classList.contains("active")) {
+            btn.style.setProperty("color", textMuted, "important");
+            btn.style.setProperty("background-color", "transparent", "important");
+          }
+        });
+      });
+      document.querySelectorAll(".header-btn i, .nav-btn i, .ribbon-btn i, .tree-icon, .tree-icon i, .brand-header i").forEach((el) => {
+        el.style.setProperty("color", "inherit", "important");
+      });
+    }
+    if (textMuted && textNormal && hoverBg) {
+      document.querySelectorAll(".file-tree-item").forEach((item) => {
+        item.style.setProperty("color", textMuted, "important");
+        item.addEventListener("mouseenter", () => {
+          item.style.setProperty("color", textNormal, "important");
+          item.style.setProperty("background-color", hoverBg, "important");
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.setProperty("color", textMuted, "important");
+          item.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (textMuted && textAccent) {
+      document.querySelectorAll(".tab").forEach((tab) => {
+        if (tab.classList.contains("active")) {
+          tab.style.setProperty("color", textAccent, "important");
+          tab.style.setProperty("border-bottom-color", textAccent, "important");
+        } else {
+          tab.style.setProperty("color", textMuted, "important");
+        }
+      });
+    }
+    if (secondaryBg && borderColor) {
+      document.querySelectorAll(".context-menu").forEach((el) => {
+        el.style.setProperty("background-color", secondaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (textNormal && hoverBg) {
+      document.querySelectorAll(".menu-item").forEach((item) => {
+        item.style.setProperty("color", textNormal, "important");
+        item.addEventListener("mouseenter", () => {
+          item.style.setProperty("background-color", hoverBg, "important");
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (borderColor) {
+      document.querySelectorAll(".menu-separator").forEach((el) => {
+        el.style.setProperty("background-color", borderColor, "important");
+      });
+    }
+    if (textAccent) {
+      document.querySelectorAll(".header-btn.active, .nav-btn.active").forEach((el) => {
+        el.style.setProperty("color", textAccent, "important");
+      });
+    }
+    if (interactiveAccent || textAccent) {
+      document.querySelectorAll(".note-card.active").forEach((el) => {
+        el.style.setProperty("background-color", interactiveAccent || textAccent, "important");
+        el.style.setProperty("color", primaryBg || "#ffffff", "important");
+      });
+    }
+    if (interactiveAccent) {
+      document.querySelectorAll(".save-btn, #save-btn").forEach((el) => {
+        el.style.setProperty("background-color", interactiveAccent, "important");
+        el.style.setProperty("color", "#ffffff", "important");
+      });
+    }
+    if (textNormal) {
+      document.querySelectorAll("#custom-preview, #custom-preview p, #custom-preview li, #custom-preview td, .property-value, .yaml-content").forEach((el) => {
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (textNormal) {
+      document.querySelectorAll("#custom-preview h1, #custom-preview h2, #custom-preview h3, #custom-preview h4, #custom-preview h5, #custom-preview h6").forEach((el) => {
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (textAccent) {
+      document.querySelectorAll("#custom-preview a, .internal-link").forEach((el) => {
+        el.style.setProperty("color", textAccent, "important");
+      });
+    }
+    if (secondaryAltBg && textNormal) {
+      document.querySelectorAll("#custom-preview pre, #custom-preview code").forEach((el) => {
+        el.style.setProperty("background-color", secondaryAltBg, "important");
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (borderColor) {
+      document.querySelectorAll("#custom-preview table, #custom-preview th, #custom-preview td").forEach((el) => {
+        el.style.setProperty("border-color", borderColor, "important");
+      });
+    }
+    if (secondaryAltBg) {
+      document.querySelectorAll("#custom-preview th").forEach((el) => {
+        el.style.setProperty("background-color", secondaryAltBg, "important");
+      });
+    }
+    if (textMuted && borderColor) {
+      document.querySelectorAll("#custom-preview blockquote").forEach((el) => {
+        el.style.setProperty("color", textMuted, "important");
+        el.style.setProperty("border-left-color", borderColor, "important");
+      });
+    }
+    if (borderColor) {
+      document.querySelectorAll(".pane-header, .brand-header, .explorer-toolbar, #editor-header, .note-card, #sidebar, #local-graph-container, #backlinks-container, .context-header, #app-ribbon, .resize-handle").forEach((el) => {
+        el.style.setProperty("border-color", borderColor, "important");
+      });
+    }
+    if (secondaryBg && borderColor) {
+      document.querySelectorAll(".yaml-properties-container").forEach((el) => {
+        el.style.setProperty("background-color", secondaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (secondaryBg && textNormal && borderColor) {
+      document.querySelectorAll(".yaml-header").forEach((el) => {
+        el.style.setProperty("background-color", secondaryBg, "important");
+        el.style.setProperty("color", textNormal, "important");
+        el.style.setProperty("border-bottom", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (textMuted) {
+      document.querySelectorAll(".yaml-key").forEach((el) => {
+        el.style.setProperty("color", textMuted, "important");
+      });
+    }
+    if (primaryBg && borderColor && textNormal) {
+      document.querySelectorAll('.yaml-value input[type="text"], .yaml-value input[type="date"], .yaml-value input[type="number"], .yaml-value textarea').forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (hoverBg) {
+      document.querySelectorAll(".yaml-property").forEach((row) => {
+        row.addEventListener("mouseenter", () => {
+          row.style.setProperty("background-color", hoverBg, "important");
+        });
+        row.addEventListener("mouseleave", () => {
+          row.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (primaryBg && borderColor && textNormal) {
+      document.querySelectorAll(".yaml-add-property button").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (textNormal && borderColor) {
+      document.querySelectorAll(".plugin-view-badge").forEach((el) => {
+        el.style.setProperty("border-bottom", `1px solid ${borderColor}`, "important");
+      });
+      document.querySelectorAll(".plugin-label").forEach((el) => {
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (primaryBg && borderColor) {
+      document.querySelectorAll(".yaml-tag-dropdown").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (textNormal && hoverBg) {
+      document.querySelectorAll(".yaml-tag-suggestion").forEach((item) => {
+        item.style.setProperty("color", textNormal, "important");
+        item.addEventListener("mouseenter", () => {
+          item.style.setProperty("background-color", hoverBg, "important");
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (primaryBg && borderColor) {
+      document.querySelectorAll(".yaml-property-dropdown").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (primaryBg && borderColor && textNormal) {
+      document.querySelectorAll(".yaml-property-search").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border-bottom", `1px solid ${borderColor}`, "important");
+        el.style.setProperty("color", textNormal, "important");
+      });
+    }
+    if (textNormal && hoverBg) {
+      document.querySelectorAll(".yaml-property-suggestion").forEach((item) => {
+        item.style.setProperty("color", textNormal, "important");
+        item.addEventListener("mouseenter", () => {
+          item.style.setProperty("background-color", hoverBg, "important");
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (primaryBg && borderColor) {
+      document.querySelectorAll(".yaml-type-selector").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (primaryBg && borderColor) {
+      document.querySelectorAll(".yaml-link-dropdown").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (textNormal && hoverBg) {
+      document.querySelectorAll(".yaml-link-suggestion").forEach((item) => {
+        item.style.setProperty("color", textNormal, "important");
+        item.addEventListener("mouseenter", () => {
+          item.style.setProperty("background-color", hoverBg, "important");
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (primaryBg && borderColor) {
+      document.querySelectorAll(".yaml-link-value").forEach((el) => {
+        el.style.setProperty("background-color", primaryBg, "important");
+        el.style.setProperty("border", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (textAccent) {
+      document.querySelectorAll(".yaml-internal-link").forEach((el) => {
+        el.style.setProperty("color", textAccent, "important");
+        el.style.setProperty("background-color", hoverBg || "rgba(76, 79, 105, 0.075)", "important");
+      });
+    }
+    if (textMuted && textNormal && hoverBg) {
+      document.querySelectorAll(".yaml-edit-link").forEach((btn) => {
+        btn.style.setProperty("color", textMuted, "important");
+        btn.addEventListener("mouseenter", () => {
+          btn.style.setProperty("color", textNormal, "important");
+          btn.style.setProperty("background-color", hoverBg, "important");
+        });
+        btn.addEventListener("mouseleave", () => {
+          btn.style.setProperty("color", textMuted, "important");
+          btn.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    if (textNormal && borderColor) {
+      document.querySelectorAll(".yaml-type-selector-header").forEach((el) => {
+        el.style.setProperty("background-color", secondaryBg, "important");
+        el.style.setProperty("color", textNormal, "important");
+        el.style.setProperty("border-bottom", `1px solid ${borderColor}`, "important");
+      });
+    }
+    if (textNormal && hoverBg) {
+      document.querySelectorAll(".yaml-type-option").forEach((item) => {
+        item.style.setProperty("color", textNormal, "important");
+        item.addEventListener("mouseenter", () => {
+          item.style.setProperty("background-color", hoverBg, "important");
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.setProperty("background-color", "transparent", "important");
+        });
+      });
+    }
+    const tagBg = getComputedStyle(root2).getPropertyValue("--tag-background").trim() || secondaryAltBg;
+    const tagColor = getComputedStyle(root2).getPropertyValue("--tag-color").trim() || textAccent;
     if (tagBg || tagColor) {
-      const tagElements = document.querySelectorAll(".yaml-tag-chip");
-      console.log("  Applying to tags:", tagElements.length, "elements");
-      tagElements.forEach((el) => {
+      document.querySelectorAll(".yaml-tag-chip").forEach((el) => {
         if (tagBg) el.style.setProperty("background-color", tagBg, "important");
         if (tagColor) el.style.setProperty("color", tagColor, "important");
       });
     }
+    if (tagBg || tagColor) {
+      document.querySelectorAll('#custom-preview a[href^="#"]').forEach((el) => {
+        if (tagBg) el.style.setProperty("background-color", tagBg, "important");
+        if (tagColor) el.style.setProperty("color", tagColor, "important");
+        el.style.setProperty("padding", "2px 8px", "important");
+        el.style.setProperty("border-radius", "12px", "important");
+        el.style.setProperty("display", "inline-flex", "important");
+      });
+    }
     const graphCanvas = document.querySelector("#graph-canvas canvas");
-    console.log("  Graph canvas found:", !!graphCanvas);
     if (graphCanvas && primaryBg) {
       graphCanvas.style.setProperty("background", primaryBg, "important");
-      console.log("  Applied background to canvas");
+      if (graphInstance) {
+        graphInstance.backgroundColor(primaryBg);
+      }
     }
-    if (graphInstance && currentPath) {
-      console.log("  Re-rendering graph for:", currentPath);
-      setTimeout(() => renderLocalGraph(currentPath), 100);
-    }
+    console.log("✅ Comprehensive theme applied");
   }
-  function renderPreview(html) {
+  function renderPreview(html, preserveScroll = false) {
     const preview = document.getElementById("custom-preview");
     const loading = document.getElementById("preview-loading");
+    const savedScrollTop = window._savedScrollPosition || 0;
+    if (preserveScroll) {
+      console.log(`📍 Using saved scroll position: ${savedScrollTop}`);
+    }
     if (html) {
       preview.innerHTML = html;
       if (window.Prism) {
@@ -31616,13 +31926,28 @@
         }
       });
       addCopyButtons(preview);
+      addDataviewTaskWarnings(preview);
+      addCalloutIcons(preview);
     }
     if (loading) {
       loading.style.display = "none";
     }
     if (preview) {
       preview.style.display = "block";
-      preview.scrollTop = 0;
+      if (preserveScroll && savedScrollTop > 0) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            preview.scrollTop = savedScrollTop;
+            console.log(`✅ Restored scroll position to: ${savedScrollTop}, actual: ${preview.scrollTop}`);
+            delete window._savedScrollPosition;
+            delete window._isCheckboxUpdate;
+          });
+        });
+      } else {
+        preview.scrollTop = 0;
+        console.log(`📍 Reset scroll to top (not a checkbox update)`);
+        delete window._isCheckboxUpdate;
+      }
     }
     console.log("✅ Preview rendered and visible");
   }
@@ -31638,7 +31963,7 @@
       const copyBtn = document.createElement("button");
       copyBtn.className = "code-copy-btn";
       copyBtn.innerHTML = copy;
-      copyBtn.style.cssText = "position: absolute !important; top: 8px !important; right: 8px !important; background: rgba(32,32,32,0.9) !important; color: white !important; padding: 6px 10px !important; border: 1px solid #444 !important; border-radius: 4px !important; cursor: pointer !important; z-index: 999 !important; display: block !important; opacity: 1 !important; visibility: visible !important;";
+      copyBtn.style.cssText = "position: absolute !important; top: 8px !important; right: 8px !important; padding: 6px 10px !important; border-radius: 4px !important; cursor: pointer !important; z-index: 999 !important; display: block !important;";
       copyBtn.onclick = () => {
         var _a2;
         const code = ((_a2 = pre.querySelector("code")) == null ? void 0 : _a2.textContent) || pre.textContent;
@@ -31652,6 +31977,51 @@
         });
       };
       wrapper.appendChild(copyBtn);
+    });
+  }
+  function addDataviewTaskWarnings(container) {
+    container.querySelectorAll(".block-language-dataview").forEach((dataviewContainer) => {
+      const hasTaskCheckboxes = dataviewContainer.querySelector('input[type="checkbox"].task-list-item-checkbox');
+      if (hasTaskCheckboxes && !dataviewContainer.querySelector(".dataview-task-warning")) {
+        const banner = document.createElement("div");
+        banner.className = "dataview-task-warning";
+        banner.innerHTML = `
+                <svg viewBox="0 0 24 24" width="16" height="16" style="display: inline-block; vertical-align: middle; margin-right: 6px;">
+                    <path fill="currentColor" d="M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z" />
+                </svg>
+                <span>Tasks in this dataview are read-only. Complete tasks in the source files to update them here.</span>
+            `;
+        dataviewContainer.insertBefore(banner, dataviewContainer.firstChild);
+      }
+    });
+  }
+  function addCalloutIcons(container) {
+    const calloutIcons = {
+      info: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 16v-4M12 8h.01"/>',
+      tip: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 2v1m0 18v1M4.22 4.22l.707.707m12.728 12.728.707.707M2 12h1m18 0h1M4.22 19.78l.707-.707M18.36 5.64l.707-.707M9 16v5h6v-5m-1-9V3h-2v4"/>',
+      warning: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 9v4m0 4h.01"/>',
+      danger: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 9v4m0 4h.01"/>',
+      error: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m15 9-6 6m0-6 6 6"/>',
+      note: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 2v6h6"/>',
+      success: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5"/>',
+      check: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5"/>',
+      quote: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/>',
+      example: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 9h6M9 15h6"/>',
+      question: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 17h.01"/>',
+      abstract: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 9h6M9 15h6"/>',
+      todo: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 8v4l2 2"/>',
+      bug: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m8 2 1.88 1.88M14.12 3.88 16 2M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5m3.53 8H3m15.53-4C19.4 8.8 21 7.1 21 5m-2.47 4H21m-2.47 4H21"/>',
+      failure: '<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m15 9-6 6m0-6 6 6"/>'
+    };
+    container.querySelectorAll(".callout").forEach((callout) => {
+      const type2 = callout.getAttribute("data-callout") || "note";
+      const iconSvg = callout.querySelector(".callout-icon svg");
+      if (iconSvg && !iconSvg.hasChildNodes()) {
+        const iconPath = calloutIcons[type2] || calloutIcons["note"];
+        iconSvg.setAttribute("viewBox", "0 0 24 24");
+        iconSvg.innerHTML = iconPath;
+        iconSvg.style.display = "block";
+      }
     });
   }
   function renderYamlProperties(yamlData, path) {
@@ -31679,7 +32049,7 @@
         <div class="plugin-view-badge">
             <span class="plugin-icon">${detectedPlugin.icon}</span>
             <span class="plugin-label">${detectedPlugin.label}</span>
-            <button class="plugin-toggle-btn" onclick="window.togglePluginView()">
+            <button class="plugin-toggle-btn" onclick="console.log('🖱️ Badge clicked!'); if (typeof window.togglePluginView === 'function') { window.togglePluginView(); } else { console.error('❌ window.togglePluginView is not a function:', typeof window.togglePluginView); }">
                 <i class="fa-solid fa-eye"></i> Toggle View
             </button>
             <span class="plugin-attribution">by ${detectedPlugin.author}</span>
@@ -31849,16 +32219,169 @@
     }
   };
   window.togglePluginView = async function() {
-    const preview = document.getElementById("custom-preview");
-    const editorContainer = document.querySelector(".EasyMDEContainer");
-    const isInEditMode = editorContainer && editorContainer.style.display !== "none";
-    if (isInEditMode) {
-      await toggleViewMode();
-      setTimeout(() => {
-        preview.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 200);
-    } else {
-      preview.scrollIntoView({ behavior: "smooth", block: "start" });
+    var _a;
+    console.log("🎯 togglePluginView called!", { currentPath, hasConn: !!conn });
+    if (!currentPath || !conn) {
+      console.error("❌ togglePluginView failed: missing currentPath or conn", { currentPath, conn });
+      return;
+    }
+    try {
+      const response = await conn.send("OPEN_FILE", { path: currentPath });
+      const data = response.data || response;
+      if (data.renderedHTML && data.renderedHTML.length > 0) {
+        console.log("🎨 ========== WEB UI RECEIVED DATA ==========");
+        console.log("📏 renderedHTML length:", data.renderedHTML.length);
+        console.log("📝 renderedHTML preview (first 1000 chars):", data.renderedHTML.substring(0, 1e3));
+        console.log("🎨 pluginCSS exists:", !!data.pluginCSS);
+        console.log("🎨 pluginCSS length:", ((_a = data.pluginCSS) == null ? void 0 : _a.length) || 0);
+        if (data.pluginCSS) {
+          console.log("🎨 pluginCSS preview (first 2000 chars):", data.pluginCSS.substring(0, 2e3));
+          console.log("🎨 CSS rule count:", (data.pluginCSS.match(/\{/g) || []).length);
+        }
+        console.log("🎨 ========== END RECEIVED DATA ==========");
+        const preview = document.getElementById("custom-preview");
+        if (preview) {
+          let pluginName = "Obsidian Plugin";
+          if (data.viewType === "kanban") {
+            pluginName = "Kanban Plugin by mgmeyers";
+          }
+          preview.innerHTML = `
+                    <div style="padding: 0px;">
+                        <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
+                            <strong>${pluginName}</strong>
+                            <span style="float: right; color: var(--text-muted);">Read-only view</span>
+                        </div>
+                        ${data.renderedHTML}
+                    </div>
+                `;
+          if (data.pluginCSS) {
+            console.log("💉 Injecting plugin CSS into DOM...");
+            let pluginStyleTag = document.getElementById("plugin-styles");
+            if (!pluginStyleTag) {
+              pluginStyleTag = document.createElement("style");
+              pluginStyleTag.id = "plugin-styles";
+              document.head.appendChild(pluginStyleTag);
+              console.log('✅ Created new <style id="plugin-styles"> tag');
+            } else {
+              console.log('♻️ Reusing existing <style id="plugin-styles"> tag');
+            }
+            const kanbanFallbackCSS = `
+/* Kanban Horizontal Board Fallback Styles */
+.kanban-plugin__item-wrapper {
+    padding: 4px !important;
+}
+
+.kanban-plugin__item {
+    background-color: var(--background-primary, #ffffff) !important;
+    border: 1px solid var(--background-modifier-border, #e0e0e0) !important;
+    border-radius: var(--radius-m, 5px) !important;
+    padding: 8px !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+    margin-bottom: 4px !important;
+}
+
+.kanban-plugin__item:hover {
+    border-color: var(--background-modifier-border-hover, #d0d0d0) !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+.kanban-plugin__lane {
+    background-color: var(--background-secondary, #f5f5f5) !important;
+    border-radius: var(--radius-m, 5px) !important;
+    padding: 8px !important;
+}
+
+.kanban-plugin__lane-header-wrapper {
+    padding: 8px !important;
+    border-bottom: 1px solid var(--background-modifier-border, #e0e0e0) !important;
+    margin-bottom: 8px !important;
+}
+
+.kanban-plugin__lane-items {
+    padding: 8px !important;
+    gap: 8px !important;
+}
+
+/* Hide interactive elements (read-only view) */
+.kanban-plugin__lane-grip,
+.kanban-plugin__lane-action-wrapper,
+.kanban-plugin__item-prefix-button,
+.kanban-plugin__item-postfix-button,
+.kanban-plugin__item-metadata-wrapper .clickable-icon,
+.kanban-plugin__grow-wrap button,
+.kanban-plugin__item-button-wrapper,
+.kanban-plugin__lane-setting-wrapper,
+.kanban-plugin__item-grip,
+.kanban-plugin__lane-collapse,
+.kanban-plugin__lane-settings,
+.kanban-plugin__lane-settings-button-wrapper,
+.kanban-plugin__lane-settings-button {
+    display: none !important;
+}
+
+/* Disable drag and drop interactions */
+.kanban-plugin__item,
+.kanban-plugin__lane {
+    cursor: default !important;
+}
+`;
+            pluginStyleTag.textContent = data.pluginCSS + "\n" + kanbanFallbackCSS;
+            console.log("✅ CSS injected with fallback styles");
+            console.log("📏 Total CSS length:", pluginStyleTag.textContent.length);
+          }
+          const editorContainer = document.querySelector(".EasyMDEContainer");
+          if (editorContainer && editorContainer.style.display !== "none") {
+            await toggleViewMode();
+          }
+          setTimeout(() => applyThemeToElements(), 100);
+        }
+        return;
+      }
+      if (data.html && data.html.length > 0) {
+        const preview = document.getElementById("custom-preview");
+        if (preview) {
+          let pluginType = "Unknown";
+          if (data.yaml) {
+            if (data.yaml["kanban-plugin"]) pluginType = "Kanban Board (Markdown Structure)";
+            else if (data.yaml["dataview"]) pluginType = "Dataview";
+            else if (data.yaml["excalidraw-plugin"]) pluginType = "Excalidraw";
+          }
+          preview.innerHTML = `
+                    <div style="padding: 20px;">
+                        <div style="background: var(--background-secondary); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
+                            <strong>${pluginType}</strong>
+                            <span style="float: right; color: var(--text-muted);">Read-only structure</span>
+                        </div>
+                        ${data.html}
+                    </div>
+                `;
+          const editorContainer = document.querySelector(".EasyMDEContainer");
+          if (editorContainer && editorContainer.style.display !== "none") {
+            await toggleViewMode();
+          }
+          setTimeout(() => applyThemeToElements(), 100);
+        }
+        return;
+      }
+      const message = document.createElement("div");
+      message.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--background-secondary);
+            color: var(--text-normal);
+            padding: 12px 16px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            z-index: 10000;
+            border: 1px solid var(--background-modifier-border);
+        `;
+      message.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> Could not render view';
+      document.body.appendChild(message);
+      setTimeout(() => message.remove(), 3e3);
+    } catch (error) {
+      console.error("Failed to get plugin view:", error);
+      alert("Could not capture plugin view from Obsidian: " + error.message);
     }
   };
   window.updateYamlProperty = async function(key, value) {
@@ -31966,6 +32489,7 @@
         </div>
     `).join("");
     document.body.appendChild(dropdown);
+    setTimeout(() => applyThemeToElements(), 10);
   }
   window.selectTag = async function(tag2, key) {
     await addYamlArrayItem(key, tag2);
@@ -32097,6 +32621,7 @@
     }, 100);
     document.body.appendChild(dropdown);
     searchInput.focus();
+    setTimeout(() => applyThemeToElements(), 10);
   }
   function displayPropertySuggestions(container, properties, customValue = null) {
     container.innerHTML = properties.map((prop) => {
@@ -32243,6 +32768,7 @@
       });
     }, 100);
     document.body.appendChild(dropdown);
+    setTimeout(() => applyThemeToElements(), 10);
   }
   window.createPropertyWithType = async function(propName, type2) {
     const selector2 = document.querySelector(".yaml-type-selector");
@@ -32334,6 +32860,7 @@
     const filtered = searchTerm ? allFiles.filter((file) => file.toLowerCase().includes(searchTerm)) : allFiles.slice(0, 50);
     displayLinkSuggestions(dropdown, filtered, input, key);
     document.body.appendChild(dropdown);
+    setTimeout(() => applyThemeToElements(), 10);
   };
   window.filterLinkAutocomplete = function(input, key) {
     const value = input.value;
@@ -32474,6 +33001,7 @@ ${bodyContent}`;
       prepareNoteList(files);
     };
     renderNode(tree, container, 0, "", currentView, iconSet, onNodeClick);
+    setTimeout(() => applyThemeToElements(), 10);
   }
   function prepareNoteList(files) {
     currentList = prepareList(files);
@@ -32658,7 +33186,6 @@ ${bodyContent}`;
         }
       });
     }
-    setTimeout(() => applyThemeToElements(), 100);
   }
   function initSidebarResize() {
     const handle = document.getElementById("sidebar-resize");
@@ -32854,8 +33381,31 @@ ${bodyContent}`;
   function sortFiles() {
     alert("Sort functionality coming in V2 update.");
   }
-  function openDailyNote() {
-    alert("Daily Notes coming in V2.");
+  async function openDailyNote() {
+    if (!conn) {
+      alert("Not connected to vault.");
+      return;
+    }
+    try {
+      console.log("📅 Sending OPEN_DAILY_NOTE command...");
+      const response = await conn.send("OPEN_DAILY_NOTE", {});
+      console.log("📅 Response received:", response);
+      const data = response.data || response;
+      if (data.success && data.path) {
+        console.log("📅 Loading file:", data.path);
+        const preview = document.getElementById("custom-preview");
+        if (preview) preview.innerHTML = "";
+        await loadFile(data.path);
+        console.log("📅 File loaded successfully");
+      } else if (data.message) {
+        alert(data.message);
+      } else {
+        console.error("📅 Unexpected response format:", response);
+      }
+    } catch (error) {
+      console.error("Failed to open daily note:", error);
+      alert("Failed to open daily note. Make sure the Daily Notes plugin is enabled in Obsidian.");
+    }
   }
   function openGraph() {
     if (!panelState.graph) togglePanel("graph");
@@ -33053,6 +33603,12 @@ ${bodyContent}`;
   window.ctxNewFolder = ctxNewFolder;
   window.ctxRename = ctxRename;
   window.ctxDelete = ctxDelete;
+  console.log("🔍 Window functions registered:", {
+    togglePluginView: typeof window.togglePluginView,
+    toggleYamlCollapse: typeof window.toggleYamlCollapse,
+    updateYamlProperty: typeof window.updateYamlProperty,
+    addYamlProperty: typeof window.addYamlProperty
+  });
   function getIdentity() {
     return window.NOTE_RELAY_IDENTITY || {
       email: null,

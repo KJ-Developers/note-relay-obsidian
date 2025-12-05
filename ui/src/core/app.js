@@ -39,7 +39,7 @@ let navigationHistory = [];
 function showWelcomeScreen() {
     const preview = document.getElementById('custom-preview');
     if (!preview) return;
-    
+
     const welcomeHTML = `
         <div style="padding: 40px; max-width: 700px; margin: 0 auto;">
             <h1 style="color: var(--interactive-accent); margin-bottom: 10px;">
@@ -78,10 +78,10 @@ function showWelcomeScreen() {
             </p>
         </div>
     `;
-    
+
     preview.innerHTML = welcomeHTML;
     preview.style.display = 'block';
-    
+
     // Hide editor components and view toggle button
     const editorEl = document.querySelector('.EasyMDEContainer');
     const loading = document.getElementById('preview-loading');
@@ -99,20 +99,20 @@ function showWelcomeScreen() {
 export function initApp() {
     console.log('🚀 Note Relay V2 Bundle Loaded - Build: Production');
     console.log('✅ Initializing Note Relay UI');
-    
+
     // Initialize connection
     conn = new VaultConnection();
-    
+
     // Load saved panel state
     const savedPanels = localStorage.getItem('panelState');
     if (savedPanels) {
         panelState = JSON.parse(savedPanels);
         applyPanelState();
     }
-    
+
     // Set up event listeners
     setupEventListeners();
-    
+
     // Initialize editor after a brief delay to ensure DOM is ready
     setTimeout(() => {
         easyMDE = initEditor('editor');
@@ -121,20 +121,20 @@ export function initApp() {
         } else {
             console.log('✅ EasyMDE editor initialized');
         }
-        
+
         // Show welcome screen after editor is initialized
         showWelcomeScreen();
     }, 100);
-    
+
     // Set up connection message handler
     conn.onMessage = handleMessage;
-    
+
     // Initialize sidebar resize
     initSidebarResize();
-    
+
     // Update icons
     updateIcons();
-    
+
     console.log('✅ App initialization complete');
 }
 
@@ -152,7 +152,7 @@ function setupEventListeners() {
             if (e.key === 'Enter') connectToVault();
         });
     }
-    
+
     // Global click to close context menu
     window.addEventListener('mousedown', (e) => {
         const menu = document.getElementById('context-menu');
@@ -160,26 +160,26 @@ function setupEventListeners() {
             menu.style.display = 'none';
         }
     }, true);
-    
+
     // Close menu on blur/escape
     window.addEventListener('blur', () => {
         const menu = document.getElementById('context-menu');
         if (menu) menu.style.display = 'none';
     });
-    
+
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             const menu = document.getElementById('context-menu');
             if (menu) menu.style.display = 'none';
         }
     });
-    
+
     // Context menu handler
     document.addEventListener('contextmenu', handleContextMenuDisplay);
-    
+
     // Link/tag/checkbox interceptors
     document.addEventListener('click', handleDocumentClick);
-    
+
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -204,7 +204,7 @@ async function handleDocumentClick(e) {
         await handleCheckboxClick(e.target);
         return;
     }
-    
+
     // Internal link handling
     if (e.target.classList.contains('internal-link')) {
         e.preventDefault();
@@ -213,7 +213,7 @@ async function handleDocumentClick(e) {
         loadFile(target);
         return;
     }
-    
+
     // Tag handling
     if (e.target.classList.contains('tag')) {
         e.preventDefault();
@@ -223,7 +223,7 @@ async function handleDocumentClick(e) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.getElementById('tab-tags').classList.add('active');
             renderSidebar();
-            
+
             const tagNode = tagTree._sub?.[tagName];
             if (tagNode && tagNode._files) {
                 prepareNoteList(tagNode._files);
@@ -238,7 +238,7 @@ async function handleDocumentClick(e) {
         }
         return;
     }
-    
+
     // Prevent other clicks inside dataview from doing anything
     if (e.target.closest('.dataview-container') || e.target.closest('.block-language-dataview')) {
         e.preventDefault();
@@ -256,11 +256,11 @@ async function handleCheckboxClick(checkbox) {
         checkbox.checked = !checkbox.checked; // Revert the visual change
         return;
     }
-    
+
     window._checkboxSaveInProgress = true;
     const newCheckedState = checkbox.checked;
     const listItem = checkbox.closest('li');
-    
+
     if (listItem && currentPath) {
         const file = masterFileList.find(f => f.path === currentPath);
         if (file) {
@@ -268,23 +268,23 @@ async function handleCheckboxClick(checkbox) {
                 console.log('📝 Checkbox clicked, fetching file content...');
                 const result = await conn.send('GET_FILE', { path: currentPath });
                 let content = result.data?.data || result.data?.content || result.data;
-                
+
                 if (typeof content !== 'string') {
                     console.error('Content is not a string');
                     checkbox.checked = !checkbox.checked;
                     window._checkboxSaveInProgress = false;
                     return;
                 }
-                
+
                 const taskRegex = /^(\s*[-*+]\s+\[)([xX\s])(\])/gm;
                 let checkboxIndex = 0;
                 // Only count non-dataview checkboxes for the index
                 const allCheckboxes = Array.from(document.querySelectorAll('#custom-preview input[type="checkbox"]'));
                 const normalCheckboxes = allCheckboxes.filter(cb => !cb.classList.contains('dataview'));
                 const targetIndex = normalCheckboxes.indexOf(checkbox);
-                
+
                 console.log(`🎯 Target checkbox index: ${targetIndex} of ${normalCheckboxes.length} normal checkboxes`);
-                
+
                 let found = false;
                 content = content.replace(taskRegex, (match, prefix, status, suffix) => {
                     if (checkboxIndex === targetIndex) {
@@ -297,26 +297,26 @@ async function handleCheckboxClick(checkbox) {
                     checkboxIndex++;
                     return match;
                 });
-                
+
                 if (!found) {
                     console.error('❌ Checkbox not found in content');
                     checkbox.checked = !checkbox.checked;
                     window._checkboxSaveInProgress = false;
                     return;
                 }
-                
+
                 // Save current scroll position BEFORE anything else
                 const preview = document.getElementById('custom-preview');
                 const scrollPos = preview ? preview.scrollTop : 0;
                 console.log(`📍 Saving scroll position BEFORE save: ${scrollPos}`);
                 window._savedScrollPosition = scrollPos;
                 window._isCheckboxUpdate = true;
-                
+
                 console.log('💾 Saving checkbox state...');
                 await conn.send('SAVE_FILE', { path: currentPath, data: content });
-                
+
                 console.log('✅ Checkbox saved, refreshing preview...');
-                
+
                 // If in preview mode, refresh the rendered view (same as YAML saves)
                 if (isReadingMode) {
                     await new Promise(resolve => setTimeout(resolve, 100));
@@ -329,9 +329,9 @@ async function handleCheckboxClick(checkbox) {
                         easyMDE.codemirror.setCursor(cursorPos);
                     }
                 }
-                
+
                 console.log('🎉 Checkbox update complete!');
-                
+
             } catch (err) {
                 console.error('❌ Failed to save checkbox state:', err);
                 checkbox.checked = !checkbox.checked;
@@ -350,22 +350,22 @@ async function handleCheckboxClick(checkbox) {
 async function connectToVault() {
     const btn = document.getElementById('connect-btn');
     const pass = document.getElementById('password-input').value;
-    
+
     if (!pass) {
         alert('Password required');
         return;
     }
-    
+
     btn.disabled = true;
     btn.innerText = 'Connecting...';
-    
+
     try {
         const onStatusUpdate = (msg) => {
             document.getElementById('status-text').innerText = msg;
         };
-        
+
         await conn.connect(pass, onStatusUpdate);
-        
+
     } catch (error) {
         if (error.message === 'Authentication required') {
             log('Session expired. Please log in to the dashboard first.');
@@ -384,7 +384,7 @@ async function connectToVault() {
  */
 function handleMessage(msg) {
     console.log('🎯 Message received:', msg.type);
-    
+
     if (msg.type === 'CONNECTED') {
         document.getElementById('connect-overlay').style.display = 'none';
         document.getElementById('app-container').classList.add('active');
@@ -394,7 +394,7 @@ function handleMessage(msg) {
         }, 200);
         return;
     }
-    
+
     if (msg.type === 'TREE') {
         console.log('📊 TREE data received:', {
             hasData: !!msg.data,
@@ -402,30 +402,30 @@ function handleMessage(msg) {
             folderCount: msg.data?.folders?.length,
             hasCss: !!msg.data?.css
         });
-        
+
         if (masterFileList.length === 0) {
             document.getElementById('connect-overlay').style.display = 'none';
             document.getElementById('app-container').classList.add('active');
             initSidebarResize();
         }
-        
+
         if (msg.data.css) {
             applyTheme(msg.data.css);
         }
-        
+
         const result = processFileData(msg.data);
         console.log('📊 Processed data:', {
             masterFileListCount: result.masterFileList.length,
             folderTreeFiles: result.folderTree._files?.length,
             tagTreeCount: Object.keys(result.tagTree).length
         });
-        
+
         const wasEmpty = masterFileList.length === 0;
-        
+
         masterFileList = result.masterFileList;
         folderTree = result.folderTree;
         tagTree = result.tagTree;
-        
+
         // Always render on first load, silent refresh on subsequent loads
         if (wasEmpty || !msg.data.files) {
             console.log('🎨 Rendering sidebar and note list');
@@ -436,22 +436,22 @@ function handleMessage(msg) {
         }
         return;
     }
-    
+
     if (msg.type === 'FILE') {
         const filePath = msg.meta?.path || msg.path;
         const content = msg.data.data || msg.data;
         console.log('📄 Loading file:', filePath, 'Current mode:', isReadingMode ? 'READ' : 'EDIT');
-        
+
         // Load into editor
         easyMDE.value(content);
         easyMDE.codemirror.clearHistory();
-        
+
         // If this is during YAML save or checkbox save, just load content and return
         if (window._yamlSaveInProgress || window._checkboxSaveInProgress) {
             console.log('⏸️ Save in progress, content loaded for processing');
             return;
         }
-        
+
         // Only manipulate loading/preview if in reading mode
         // (when toggling to edit mode, toggleViewMode already handled the UI)
         if (isReadingMode) {
@@ -459,7 +459,7 @@ function handleMessage(msg) {
             const preview = document.getElementById('custom-preview');
             if (loading) loading.style.display = 'flex';
             if (preview) preview.style.display = 'none';
-            
+
             // Double-toggle to get rendered version
             toggleViewMode(); // Toggle off (to edit)
             setTimeout(() => toggleViewMode(), 50); // Toggle on (to preview - triggers fetch)
@@ -467,33 +467,33 @@ function handleMessage(msg) {
             // In edit mode - just refresh the editor
             if (easyMDE) easyMDE.codemirror.refresh();
         }
-        
+
         renderBacklinks(msg.data.backlinks);
         if (panelState.graph) renderLocalGraph(filePath);
         return;
     }
-    
+
     if (msg.type === 'RENDERED_FILE') {
         // Check if this is a checkbox-triggered re-render (we have a saved scroll position)
         const isCheckboxUpdate = window._savedScrollPosition !== undefined;
         if (isCheckboxUpdate) {
             console.log('📍 RENDERED_FILE from checkbox update, will preserve scroll');
         }
-        
+
         if (msg.data.files) {
             const result = processFileData({ files: msg.data.files }, true);
             masterFileList = result.masterFileList;
             folderTree = result.folderTree;
             tagTree = result.tagTree;
         }
-        
+
         if (msg.data.css) {
             applyTheme(msg.data.css);
         }
-        
+
         // Store YAML data for editing (and get original content if available)
         currentYamlData = msg.data.yaml;
-        
+
         // If we have YAML, we need to get the original content to reconstruct later
         if (currentYamlData && !contentWithoutYaml && easyMDE) {
             const editorContent = easyMDE.value();
@@ -504,13 +504,13 @@ function handleMessage(msg) {
                 contentWithoutYaml = editorContent;
             }
         }
-        
+
         renderYamlProperties(msg.data.yaml, msg.meta?.path || msg.path);
-        
+
         // Check if we should preserve scroll position (set by checkbox handler)
         const preserveScroll = window._isCheckboxUpdate === true;
         console.log(`🔍 RENDERED_FILE: preserveScroll=${preserveScroll}, savedPos=${window._savedScrollPosition}`);
-        
+
         renderPreview(msg.data.html, preserveScroll);
         renderBacklinks(msg.data.backlinks || []);
         const renderedPath = msg.meta?.path || msg.path;
@@ -530,13 +530,13 @@ function applyTheme(css) {
         styleTag.id = 'obsidian-theme-vars';
         document.head.appendChild(styleTag);
     }
-    
+
     styleTag.textContent = css;
     console.log('📝 CSS injected, length:', css.length);
-    
+
     // Force reflow
     document.body.offsetHeight;
-    
+
     // Set backgrounds and colors directly via inline styles for all major areas
     setTimeout(() => {
         applyThemeToElements();
@@ -549,7 +549,7 @@ function applyTheme(css) {
  */
 function applyThemeToElements() {
     const root = document.documentElement;
-    
+
     // Extract all theme colors
     const primaryBg = getComputedStyle(root).getPropertyValue('--background-primary').trim();
     const secondaryBg = getComputedStyle(root).getPropertyValue('--background-secondary').trim();
@@ -562,11 +562,11 @@ function applyThemeToElements() {
     const borderColor = getComputedStyle(root).getPropertyValue('--background-modifier-border').trim();
     const hoverBg = getComputedStyle(root).getPropertyValue('--background-modifier-hover').trim();
     const interactiveAccent = getComputedStyle(root).getPropertyValue('--interactive-accent').trim();
-    
+
     console.log('🎨 Applying comprehensive theme...');
     console.log('Border color extracted:', borderColor);
     console.log('Hover background extracted:', hoverBg);
-    
+
     // === FIX: Force border visibility ===
     // Apply borders with inline styles since CSS background shorthand was resetting them
     if (borderColor) {
@@ -580,42 +580,42 @@ function applyThemeToElements() {
             el.style.setProperty('border-top', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     // === BACKGROUNDS ===
-    
+
     // Main content areas
     if (primaryBg) {
         document.querySelectorAll('body, #content-area, #main-content, #custom-preview, #graph-canvas, #local-graph-container').forEach(el => {
             el.style.setProperty('background', primaryBg, 'important');
         });
     }
-    
+
     // Sidebar areas
     if (secondaryBg) {
         document.querySelectorAll('#sidebar, #sidebar-tree-area, #note-list-container, .pane-header, .explorer-toolbar').forEach(el => {
             el.style.setProperty('background', secondaryBg, 'important');
         });
     }
-    
+
     // === TEXT COLORS ===
-    
+
     // Sidebar text (folders, notes) and filename
     if (textNormal) {
         document.querySelectorAll('.tree-text, .note-card, .note-title, #sidebar-tree-area, #note-list-container, .brand-header, #filename').forEach(el => {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // Buttons and icons - muted by default with hover effects
     if (textMuted && textNormal && hoverBg) {
         document.querySelectorAll('.nav-btn, .header-btn, .ribbon-btn').forEach(btn => {
             btn.style.setProperty('color', textMuted, 'important');
-            
+
             btn.addEventListener('mouseenter', () => {
                 btn.style.setProperty('color', textNormal, 'important');
                 btn.style.setProperty('background-color', hoverBg, 'important');
             });
-            
+
             btn.addEventListener('mouseleave', () => {
                 if (!btn.classList.contains('active')) {
                     btn.style.setProperty('color', textMuted, 'important');
@@ -623,30 +623,30 @@ function applyThemeToElements() {
                 }
             });
         });
-        
+
         // Icon colors inherit from button
         document.querySelectorAll('.header-btn i, .nav-btn i, .ribbon-btn i, .tree-icon, .tree-icon i, .brand-header i').forEach(el => {
             el.style.setProperty('color', 'inherit', 'important');
         });
     }
-    
+
     // Tree items (folders and files) - hover effects
     if (textMuted && textNormal && hoverBg) {
         document.querySelectorAll('.file-tree-item').forEach(item => {
             item.style.setProperty('color', textMuted, 'important');
-            
+
             item.addEventListener('mouseenter', () => {
                 item.style.setProperty('color', textNormal, 'important');
                 item.style.setProperty('background-color', hoverBg, 'important');
             });
-            
+
             item.addEventListener('mouseleave', () => {
                 item.style.setProperty('color', textMuted, 'important');
                 item.style.setProperty('background-color', 'transparent', 'important');
             });
         });
     }
-    
+
     // Tab highlighting (FOLDERS/TAGS)
     if (textMuted && textAccent) {
         document.querySelectorAll('.tab').forEach(tab => {
@@ -658,7 +658,7 @@ function applyThemeToElements() {
             }
         });
     }
-    
+
     // === CONTEXT MENU ===
     if (secondaryBg && borderColor) {
         document.querySelectorAll('.context-menu').forEach(el => {
@@ -666,7 +666,7 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     if (textNormal && hoverBg) {
         document.querySelectorAll('.menu-item').forEach(item => {
             item.style.setProperty('color', textNormal, 'important');
@@ -678,20 +678,20 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     if (borderColor) {
         document.querySelectorAll('.menu-separator').forEach(el => {
             el.style.setProperty('background-color', borderColor, 'important');
         });
     }
-    
+
     // Active buttons
     if (textAccent) {
         document.querySelectorAll('.header-btn.active, .nav-btn.active').forEach(el => {
             el.style.setProperty('color', textAccent, 'important');
         });
     }
-    
+
     // Active note highlight
     if (interactiveAccent || textAccent) {
         document.querySelectorAll('.note-card.active').forEach(el => {
@@ -699,7 +699,7 @@ function applyThemeToElements() {
             el.style.setProperty('color', primaryBg || '#ffffff', 'important');
         });
     }
-    
+
     // Save button
     if (interactiveAccent) {
         document.querySelectorAll('.save-btn, #save-btn').forEach(el => {
@@ -707,41 +707,41 @@ function applyThemeToElements() {
             el.style.setProperty('color', '#ffffff', 'important');
         });
     }
-    
+
     // === CONTENT TEXT ===
-    
+
     // Paragraphs, lists, general content
     if (textNormal) {
         document.querySelectorAll('#custom-preview, #custom-preview p, #custom-preview li, #custom-preview td, .property-value, .yaml-content').forEach(el => {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // Headings
     if (textNormal) {
         document.querySelectorAll('#custom-preview h1, #custom-preview h2, #custom-preview h3, #custom-preview h4, #custom-preview h5, #custom-preview h6').forEach(el => {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // Links
     if (textAccent) {
         document.querySelectorAll('#custom-preview a, .internal-link').forEach(el => {
             el.style.setProperty('color', textAccent, 'important');
         });
     }
-    
+
     // === CODE BLOCKS ===
-    
+
     if (secondaryAltBg && textNormal) {
         document.querySelectorAll('#custom-preview pre, #custom-preview code').forEach(el => {
             el.style.setProperty('background-color', secondaryAltBg, 'important');
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // === TABLES ===
-    
+
     if (borderColor) {
         document.querySelectorAll('#custom-preview table, #custom-preview th, #custom-preview td').forEach(el => {
             el.style.setProperty('border-color', borderColor, 'important');
@@ -752,27 +752,27 @@ function applyThemeToElements() {
             el.style.setProperty('background-color', secondaryAltBg, 'important');
         });
     }
-    
+
     // === BLOCKQUOTES ===
-    
+
     if (textMuted && borderColor) {
         document.querySelectorAll('#custom-preview blockquote').forEach(el => {
             el.style.setProperty('color', textMuted, 'important');
             el.style.setProperty('border-left-color', borderColor, 'important');
         });
     }
-    
+
     // === BORDERS ===
-    
+
     if (borderColor) {
         // Only set border-color which applies to whichever borders are already defined in CSS
         document.querySelectorAll('.pane-header, .brand-header, .explorer-toolbar, #editor-header, .note-card, #sidebar, #local-graph-container, #backlinks-container, .context-header, #app-ribbon, .resize-handle').forEach(el => {
             el.style.setProperty('border-color', borderColor, 'important');
         });
     }
-    
+
     // === PROPERTIES PANEL ===
-    
+
     // Properties container
     if (secondaryBg && borderColor) {
         document.querySelectorAll('.yaml-properties-container').forEach(el => {
@@ -780,7 +780,7 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     // Properties header
     if (secondaryBg && textNormal && borderColor) {
         document.querySelectorAll('.yaml-header').forEach(el => {
@@ -789,14 +789,14 @@ function applyThemeToElements() {
             el.style.setProperty('border-bottom', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     // Property keys (labels)
     if (textMuted) {
         document.querySelectorAll('.yaml-key').forEach(el => {
             el.style.setProperty('color', textMuted, 'important');
         });
     }
-    
+
     // Property input fields
     if (primaryBg && borderColor && textNormal) {
         document.querySelectorAll('.yaml-value input[type="text"], .yaml-value input[type="date"], .yaml-value input[type="number"], .yaml-value textarea').forEach(el => {
@@ -805,7 +805,7 @@ function applyThemeToElements() {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // Property rows hover
     if (hoverBg) {
         document.querySelectorAll('.yaml-property').forEach(row => {
@@ -817,7 +817,7 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     // Add property button
     if (primaryBg && borderColor && textNormal) {
         document.querySelectorAll('.yaml-add-property button').forEach(el => {
@@ -826,7 +826,7 @@ function applyThemeToElements() {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // Plugin view badge
     if (textNormal && borderColor) {
         document.querySelectorAll('.plugin-view-badge').forEach(el => {
@@ -836,9 +836,9 @@ function applyThemeToElements() {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     // === DROPDOWNS (Tag & Property Selectors) ===
-    
+
     // Tag dropdown
     if (primaryBg && borderColor) {
         document.querySelectorAll('.yaml-tag-dropdown').forEach(el => {
@@ -846,7 +846,7 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     if (textNormal && hoverBg) {
         document.querySelectorAll('.yaml-tag-suggestion').forEach(item => {
             item.style.setProperty('color', textNormal, 'important');
@@ -858,7 +858,7 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     // Property type dropdown
     if (primaryBg && borderColor) {
         document.querySelectorAll('.yaml-property-dropdown').forEach(el => {
@@ -866,7 +866,7 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     if (primaryBg && borderColor && textNormal) {
         document.querySelectorAll('.yaml-property-search').forEach(el => {
             el.style.setProperty('background-color', primaryBg, 'important');
@@ -874,7 +874,7 @@ function applyThemeToElements() {
             el.style.setProperty('color', textNormal, 'important');
         });
     }
-    
+
     if (textNormal && hoverBg) {
         document.querySelectorAll('.yaml-property-suggestion').forEach(item => {
             item.style.setProperty('color', textNormal, 'important');
@@ -886,7 +886,7 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     // Type selector dropdown
     if (primaryBg && borderColor) {
         document.querySelectorAll('.yaml-type-selector').forEach(el => {
@@ -894,7 +894,7 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     // Link autocomplete dropdown
     if (primaryBg && borderColor) {
         document.querySelectorAll('.yaml-link-dropdown').forEach(el => {
@@ -902,7 +902,7 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     if (textNormal && hoverBg) {
         document.querySelectorAll('.yaml-link-suggestion').forEach(item => {
             item.style.setProperty('color', textNormal, 'important');
@@ -914,7 +914,7 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     // Link value containers and internal links
     if (primaryBg && borderColor) {
         document.querySelectorAll('.yaml-link-value').forEach(el => {
@@ -922,14 +922,14 @@ function applyThemeToElements() {
             el.style.setProperty('border', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     if (textAccent) {
         document.querySelectorAll('.yaml-internal-link').forEach(el => {
             el.style.setProperty('color', textAccent, 'important');
             el.style.setProperty('background-color', hoverBg || 'rgba(76, 79, 105, 0.075)', 'important');
         });
     }
-    
+
     // Edit link button
     if (textMuted && textNormal && hoverBg) {
         document.querySelectorAll('.yaml-edit-link').forEach(btn => {
@@ -944,7 +944,7 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     if (textNormal && borderColor) {
         document.querySelectorAll('.yaml-type-selector-header').forEach(el => {
             el.style.setProperty('background-color', secondaryBg, 'important');
@@ -952,7 +952,7 @@ function applyThemeToElements() {
             el.style.setProperty('border-bottom', `1px solid ${borderColor}`, 'important');
         });
     }
-    
+
     if (textNormal && hoverBg) {
         document.querySelectorAll('.yaml-type-option').forEach(item => {
             item.style.setProperty('color', textNormal, 'important');
@@ -964,9 +964,9 @@ function applyThemeToElements() {
             });
         });
     }
-    
+
     // === TAG CHIPS ===
-    
+
     const tagBg = getComputedStyle(root).getPropertyValue('--tag-background').trim() || secondaryAltBg;
     const tagColor = getComputedStyle(root).getPropertyValue('--tag-color').trim() || textAccent;
     if (tagBg || tagColor) {
@@ -975,9 +975,9 @@ function applyThemeToElements() {
             if (tagColor) el.style.setProperty('color', tagColor, 'important');
         });
     }
-    
+
     // === TAGS IN CONTENT ===
-    
+
     // Style tag links to match properties area - use same variables as .yaml-tag-chip
     if (tagBg || tagColor) {
         document.querySelectorAll('#custom-preview a[href^="#"]').forEach(el => {
@@ -988,9 +988,9 @@ function applyThemeToElements() {
             el.style.setProperty('display', 'inline-flex', 'important');
         });
     }
-    
+
     // === GRAPH CANVAS ===
-    
+
     const graphCanvas = document.querySelector('#graph-canvas canvas');
     if (graphCanvas && primaryBg) {
         graphCanvas.style.setProperty('background', primaryBg, 'important');
@@ -998,7 +998,7 @@ function applyThemeToElements() {
             graphInstance.backgroundColor(primaryBg);
         }
     }
-    
+
     console.log('✅ Comprehensive theme applied');
 }
 
@@ -1010,23 +1010,23 @@ function applyThemeToElements() {
 function renderPreview(html, preserveScroll = false) {
     const preview = document.getElementById('custom-preview');
     const loading = document.getElementById('preview-loading');
-    
+
     // Get saved scroll position (set by checkbox handler before re-render)
     const savedScrollTop = window._savedScrollPosition || 0;
     if (preserveScroll) {
         console.log(`📍 Using saved scroll position: ${savedScrollTop}`);
     }
-    
+
     if (html) {
         preview.innerHTML = html;
-        
+
         // Apply Prism syntax highlighting
         if (window.Prism) {
             preview.querySelectorAll('pre code').forEach(block => {
                 window.Prism.highlightElement(block);
             });
         }
-        
+
         // Inject Unicode for MathJax
         preview.querySelectorAll('mjx-c[class*=\"mjx-c\"]').forEach(el => {
             const match = el.className.match(/mjx-c([0-9A-F]+)/i);
@@ -1035,17 +1035,17 @@ function renderPreview(html, preserveScroll = false) {
                 el.textContent = String.fromCodePoint(codePoint);
             }
         });
-        
+
         // Add copy buttons to code blocks
         addCopyButtons(preview);
-        
+
         // Add read-only warning banners to dataview containers with task checkboxes
         addDataviewTaskWarnings(preview);
-        
+
         // Inject callout icons
         addCalloutIcons(preview);
     }
-    
+
     // Hide loading spinner and show preview
     if (loading) {
         loading.style.display = 'none';
@@ -1070,7 +1070,7 @@ function renderPreview(html, preserveScroll = false) {
             delete window._isCheckboxUpdate;
         }
     }
-    
+
     console.log('✅ Preview rendered and visible');
 }
 
@@ -1080,13 +1080,13 @@ function renderPreview(html, preserveScroll = false) {
 function addCopyButtons(container) {
     container.querySelectorAll('pre').forEach(pre => {
         if (pre.parentNode.classList?.contains('code-block-wrapper')) return;
-        
+
         const wrapper = document.createElement('div');
         wrapper.className = 'code-block-wrapper';
         wrapper.style.cssText = 'position: relative; margin: 1em 0;';
         pre.parentNode.insertBefore(wrapper, pre);
         wrapper.appendChild(pre);
-        
+
         const copyBtn = document.createElement('button');
         copyBtn.className = 'code-copy-btn';
         copyBtn.innerHTML = icons.copy;
@@ -1114,7 +1114,7 @@ function addDataviewTaskWarnings(container) {
     container.querySelectorAll('.block-language-dataview').forEach(dataviewContainer => {
         // Check if this dataview contains task checkboxes
         const hasTaskCheckboxes = dataviewContainer.querySelector('input[type="checkbox"].task-list-item-checkbox');
-        
+
         if (hasTaskCheckboxes && !dataviewContainer.querySelector('.dataview-task-warning')) {
             const banner = document.createElement('div');
             banner.className = 'dataview-task-warning';
@@ -1124,7 +1124,7 @@ function addDataviewTaskWarnings(container) {
                 </svg>
                 <span>Tasks in this dataview are read-only. Complete tasks in the source files to update them here.</span>
             `;
-            
+
             // Insert banner at the top of the dataview container
             dataviewContainer.insertBefore(banner, dataviewContainer.firstChild);
         }
@@ -1156,7 +1156,7 @@ function addCalloutIcons(container) {
     container.querySelectorAll('.callout').forEach(callout => {
         const type = callout.getAttribute('data-callout') || 'note';
         const iconSvg = callout.querySelector('.callout-icon svg');
-        
+
         if (iconSvg && !iconSvg.hasChildNodes()) {
             const iconPath = calloutIcons[type] || calloutIcons['note'];
             iconSvg.setAttribute('viewBox', '0 0 24 24');
@@ -1172,17 +1172,17 @@ function addCalloutIcons(container) {
 function renderYamlProperties(yamlData, path) {
     const container = document.getElementById('yaml-properties-container');
     if (!container) return;
-    
+
     // Always show properties panel, even if empty
     const hasYaml = yamlData && Object.keys(yamlData).length > 0;
-    
+
     // Detect plugin views
     const PLUGIN_VIEWS = {
         'kanban-plugin': { icon: '📋', label: 'Kanban Board', author: 'mgmeyers' },
         'dataview': { icon: '📊', label: 'Dataview Query', author: 'blacksmithgu' },
         'excalidraw-plugin': { icon: '✏️', label: 'Excalidraw Drawing', author: 'zsolt' }
     };
-    
+
     let detectedPlugin = null;
     if (hasYaml) {
         Object.keys(yamlData).forEach(key => {
@@ -1191,24 +1191,24 @@ function renderYamlProperties(yamlData, path) {
             }
         });
     }
-    
+
     const isCollapsed = localStorage.getItem('yamlCollapsed') === 'true';
-    
-    const propertiesHtml = hasYaml ? Object.entries(yamlData).map(([key, value]) => 
+
+    const propertiesHtml = hasYaml ? Object.entries(yamlData).map(([key, value]) =>
         renderYamlProperty(key, value, path)
     ).join('') : '<div style="padding: 8px; color: var(--text-muted); font-size: 12px; text-align: center;">No properties yet</div>';
-    
+
     const pluginBadgeHtml = detectedPlugin ? `
         <div class="plugin-view-badge">
             <span class="plugin-icon">${detectedPlugin.icon}</span>
             <span class="plugin-label">${detectedPlugin.label}</span>
-            <button class="plugin-toggle-btn" onclick="window.togglePluginView()">
+            <button class="plugin-toggle-btn" onclick="console.log('🖱️ Badge clicked!'); if (typeof window.togglePluginView === 'function') { window.togglePluginView(); } else { console.error('❌ window.togglePluginView is not a function:', typeof window.togglePluginView); }">
                 <i class="fa-solid fa-eye"></i> Toggle View
             </button>
             <span class="plugin-attribution">by ${detectedPlugin.author}</span>
         </div>
     ` : '';
-    
+
     container.innerHTML = `
         <div class="yaml-header" onclick="window.toggleYamlCollapse()">
             <span>
@@ -1226,9 +1226,9 @@ function renderYamlProperties(yamlData, path) {
             </div>
         </div>
     `;
-    
+
     container.style.display = 'block';
-    
+
     // Reapply theme to newly rendered elements (especially tags)
     setTimeout(() => applyThemeToElements(), 10);
 }
@@ -1245,7 +1245,7 @@ function renderYamlProperty(key, value, path) {
                 <i class="fa-solid fa-xmark" onclick="window.removeYamlArrayItem('${key}', '${item}')"></i>
             </span>
         `).join('');
-        
+
         return `
             <div class="yaml-property" data-key="${key}">
                 <div class="yaml-key">${key}</div>
@@ -1265,7 +1265,7 @@ function renderYamlProperty(key, value, path) {
             </div>
         `;
     }
-    
+
     // Handle booleans (check before numbers to avoid false positives)
     if (typeof value === 'boolean') {
         return `
@@ -1282,12 +1282,12 @@ function renderYamlProperty(key, value, path) {
             </div>
         `;
     }
-    
+
     // Handle dates - check for date format YYYY-MM-DD or known date property names
     const valueString = String(value || '');
     const isDateFormat = /^\d{4}-\d{2}-\d{2}$/.test(valueString);
     const isDateProperty = ['date', 'created', 'modified', 'due'].includes(key);
-    
+
     if (isDateFormat || isDateProperty) {
         return `
             <div class="yaml-property" data-key="${key}">
@@ -1303,7 +1303,7 @@ function renderYamlProperty(key, value, path) {
             </div>
         `;
     }
-    
+
     // Handle numbers
     if (typeof value === 'number' || (!isNaN(value) && value !== '' && !isNaN(parseFloat(value)))) {
         return `
@@ -1322,7 +1322,7 @@ function renderYamlProperty(key, value, path) {
             </div>
         `;
     }
-    
+
     // Handle internal links (wikilinks)
     const stringValue = String(value || '');
     const hasWikilink = stringValue.includes('[[') && stringValue.includes(']]');
@@ -1330,12 +1330,12 @@ function renderYamlProperty(key, value, path) {
         // Parse all links and text between them
         let html = stringValue;
         const linkRegex = /\[\[([^\]]+)\]\]/g;
-        
+
         // Replace all [[links]] with clickable elements
         html = html.replace(linkRegex, (match, linkText) => {
             return `<a href="${linkText}.md" class="internal-link yaml-internal-link"><i class="fa-solid fa-link"></i> ${linkText}</a>`;
         });
-        
+
         return `
             <div class="yaml-property" data-key="${key}">
                 <div class="yaml-key">${key}</div>
@@ -1351,7 +1351,7 @@ function renderYamlProperty(key, value, path) {
             </div>
         `;
     }
-    
+
     // Handle multiline text
     if (stringValue.includes('\n') || stringValue.length > 100) {
         const escapedValue = stringValue.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -1369,7 +1369,7 @@ function renderYamlProperty(key, value, path) {
             </div>
         `;
     }
-    
+
     // Handle regular strings (default)
     const escapedValue = stringValue.replace(/"/g, '&quot;');
     return `
@@ -1393,10 +1393,10 @@ function renderYamlProperty(key, value, path) {
 /**
  * Toggle YAML properties collapsed state
  */
-window.toggleYamlCollapse = function() {
+window.toggleYamlCollapse = function () {
     const content = document.querySelector('.yaml-content');
     const icon = document.querySelector('.yaml-header i:first-child');
-    
+
     if (content && icon) {
         const isCollapsed = content.classList.toggle('collapsed');
         icon.className = `fa-solid fa-chevron-${isCollapsed ? 'right' : 'down'}`;
@@ -1405,63 +1405,43 @@ window.toggleYamlCollapse = function() {
 };
 
 /**
- * Toggle between plugin rendered view and markdown source
+ * Render Plugin Data (Kanban, etc.)
  */
-window.togglePluginView = async function() {
-    if (!currentPath || !conn) return;
-    
-    try {
-        const response = await conn.send('OPEN_FILE', { path: currentPath });
-        
-        // Extract the data
-        const data = response.data || response;
-        
-        // Check for plugin-rendered HTML first
-        if (data.renderedHTML && data.renderedHTML.length > 0) {
-            console.log('🎨 ========== WEB UI RECEIVED DATA ==========');
-            console.log('📏 renderedHTML length:', data.renderedHTML.length);
-            console.log('📝 renderedHTML preview (first 1000 chars):', data.renderedHTML.substring(0, 1000));
-            console.log('🎨 pluginCSS exists:', !!data.pluginCSS);
-            console.log('🎨 pluginCSS length:', data.pluginCSS?.length || 0);
-            if (data.pluginCSS) {
-                console.log('🎨 pluginCSS preview (first 2000 chars):', data.pluginCSS.substring(0, 2000));
-                console.log('🎨 CSS rule count:', (data.pluginCSS.match(/\{/g) || []).length);
+function renderPluginData(data) {
+    console.log('🎨 ========== WEB UI RECEIVED DATA ==========');
+    console.log('📏 renderedHTML length:', data.renderedHTML ? data.renderedHTML.length : 0);
+    console.log('🎨 pluginCSS exists:', !!data.pluginCSS);
+
+    const preview = document.getElementById('custom-preview');
+    if (preview && data.renderedHTML) {
+        // Get plugin name for attribution
+        let pluginName = 'Obsidian Plugin';
+        if (data.viewType === 'kanban') {
+            pluginName = 'Kanban Plugin by mgmeyers';
+        }
+
+        preview.innerHTML = `
+            <div style="padding: 0px;">
+                <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
+                    <strong>${pluginName}</strong>
+                    <span style="float: right; color: var(--text-muted);">Read-only view</span>
+                </div>
+                ${data.renderedHTML}
+            </div>
+        `;
+
+        // Inject plugin CSS if provided
+        if (data.pluginCSS) {
+            console.log('💉 Injecting plugin CSS into DOM...');
+            let pluginStyleTag = document.getElementById('plugin-styles');
+            if (!pluginStyleTag) {
+                pluginStyleTag = document.createElement('style');
+                pluginStyleTag.id = 'plugin-styles';
+                document.head.appendChild(pluginStyleTag);
             }
-            console.log('🎨 ========== END RECEIVED DATA ==========');
-            
-            const preview = document.getElementById('custom-preview');
-            if (preview) {
-                // Get plugin name for attribution
-                let pluginName = 'Obsidian Plugin';
-                if (data.viewType === 'kanban') {
-                    pluginName = 'Kanban Plugin by mgmeyers';
-                }
-                
-                preview.innerHTML = `
-                    <div style="padding: 0px;">
-                        <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
-                            <strong>${pluginName}</strong>
-                            <span style="float: right; color: var(--text-muted);">Read-only view</span>
-                        </div>
-                        ${data.renderedHTML}
-                    </div>
-                `;
-                
-                // Inject plugin CSS if provided
-                if (data.pluginCSS) {
-                    console.log('💉 Injecting plugin CSS into DOM...');
-                    let pluginStyleTag = document.getElementById('plugin-styles');
-                    if (!pluginStyleTag) {
-                        pluginStyleTag = document.createElement('style');
-                        pluginStyleTag.id = 'plugin-styles';
-                        document.head.appendChild(pluginStyleTag);
-                        console.log('✅ Created new <style id="plugin-styles"> tag');
-                    } else {
-                        console.log('♻️ Reusing existing <style id="plugin-styles"> tag');
-                    }
-                    
-                    // Add fallback CSS for Kanban horizontal board styling
-                    const kanbanFallbackCSS = `
+
+            // Add fallback CSS for Kanban horizontal board styling
+            const kanbanFallbackCSS = `
 /* Kanban Horizontal Board Fallback Styles */
 .kanban-plugin__item-wrapper {
     padding: 4px !important;
@@ -1521,27 +1501,60 @@ window.togglePluginView = async function() {
     cursor: default !important;
 }
 `;
-                    
-                    pluginStyleTag.textContent = data.pluginCSS + '\n' + kanbanFallbackCSS;
-                    console.log('✅ CSS injected with fallback styles');
-                    console.log('📏 Total CSS length:', pluginStyleTag.textContent.length);
+
+            pluginStyleTag.textContent = data.pluginCSS + '\n' + kanbanFallbackCSS;
+        }
+
+        // Apply theme to the new content
+        setTimeout(() => applyThemeToElements(), 100);
+    }
+}
+
+/**
+ * Toggle between plugin rendered view and markdown source
+ */
+window.togglePluginView = async function () {
+    console.log('🎯 togglePluginView called!', { currentPath, hasConn: !!conn });
+    if (!currentPath || !conn) {
+        console.error('❌ togglePluginView failed: missing currentPath or conn', { currentPath, conn });
+        return;
+    }
+
+    try {
+        const response = await conn.send('OPEN_FILE', { path: currentPath });
+
+        // Extract the data
+        const data = response.data || response;
+
+        if (data.renderedHTML && data.renderedHTML.length > 0) {
+            renderPluginData(data);
+
+            // Switch to preview mode if in edit mode
+            const editorContainer = document.querySelector('.EasyMDEContainer');
+            if (editorContainer && editorContainer.style.display !== 'none') {
+                // Manually update UI state without calling toggleViewMode to avoid loop
+                isReadingMode = true;
+                const btn = document.getElementById('view-btn');
+                const preview = document.getElementById('custom-preview');
+                const loading = document.getElementById('preview-loading');
+                const saveBtn = document.getElementById('save-btn');
+
+                if (btn) {
+                    btn.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+                    btn.title = 'Switch to Edit Mode';
                 }
-                
-                // Switch to preview mode if in edit mode
-                const editorContainer = document.querySelector('.EasyMDEContainer');
-                if (editorContainer && editorContainer.style.display !== 'none') {
-                    await toggleViewMode();
-                }
-                
-                // Apply theme to the new content
-                setTimeout(() => applyThemeToElements(), 100);
+                if (saveBtn) saveBtn.style.display = 'none';
+
+                editorContainer.style.display = 'none';
+                if (loading) loading.style.display = 'none';
+                if (preview) preview.style.display = 'block';
             }
             return;
         }
-        
+
         // Fallback: Check for markdown HTML
         if (data.html && data.html.length > 0) {
-            
+
             const preview = document.getElementById('custom-preview');
             if (preview) {
                 let pluginType = 'Unknown';
@@ -1550,7 +1563,7 @@ window.togglePluginView = async function() {
                     else if (data.yaml['dataview']) pluginType = 'Dataview';
                     else if (data.yaml['excalidraw-plugin']) pluginType = 'Excalidraw';
                 }
-                
+
                 preview.innerHTML = `
                     <div style="padding: 20px;">
                         <div style="background: var(--background-secondary); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
@@ -1560,13 +1573,13 @@ window.togglePluginView = async function() {
                         ${data.html}
                     </div>
                 `;
-                
+
                 // Switch to preview mode if in edit mode
                 const editorContainer = document.querySelector('.EasyMDEContainer');
                 if (editorContainer && editorContainer.style.display !== 'none') {
                     await toggleViewMode();
                 }
-                
+
                 // Apply theme to the new content
                 setTimeout(() => applyThemeToElements(), 100);
             }
@@ -1588,7 +1601,7 @@ window.togglePluginView = async function() {
         message.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> Could not render view';
         document.body.appendChild(message);
         setTimeout(() => message.remove(), 3000);
-        
+
     } catch (error) {
         console.error('Failed to get plugin view:', error);
         alert('Could not capture plugin view from Obsidian: ' + error.message);
@@ -1598,9 +1611,9 @@ window.togglePluginView = async function() {
 /**
  * Update YAML property value
  */
-window.updateYamlProperty = async function(key, value) {
+window.updateYamlProperty = async function (key, value) {
     if (!currentYamlData || !currentPath) return;
-    
+
     currentYamlData[key] = value;
     await saveYamlToFile();
 };
@@ -1608,7 +1621,7 @@ window.updateYamlProperty = async function(key, value) {
 /**
  * Handle array input (tags, aliases, etc.)
  */
-window.handleYamlArrayInput = function(event, key) {
+window.handleYamlArrayInput = function (event, key) {
     if (event.key === 'Enter' && event.target.value.trim()) {
         event.preventDefault();
         const value = event.target.value.trim();
@@ -1630,10 +1643,10 @@ window.handleYamlArrayInput = function(event, key) {
 /**
  * Show tag dropdown with suggestions
  */
-window.showTagDropdown = function(input, key) {
+window.showTagDropdown = function (input, key) {
     // Get all existing tags from tagTree
     const allTags = [];
-    
+
     // tagTree structure: { _sub: { 'tagname': { ... } } } or { 'tagname': { ... } }
     if (tagTree && typeof tagTree === 'object') {
         // Try _sub first (nested structure for tags)
@@ -1657,29 +1670,29 @@ window.showTagDropdown = function(input, key) {
             });
         }
     }
-    
+
     if (allTags.length === 0) return;
-    
+
     // Get already used tags in this note
     const usedTags = currentYamlData && currentYamlData[key] ? currentYamlData[key] : [];
-    
+
     // Filter out already used tags
     const availableTags = allTags.filter(tag => !usedTags.includes(tag));
-    
+
     if (availableTags.length === 0) return;
-    
+
     displayTagDropdown(input, availableTags, key);
 };
 
 /**
  * Filter tag dropdown based on input
  */
-window.filterTagDropdown = function(input, key) {
+window.filterTagDropdown = function (input, key) {
     const searchTerm = input.value.toLowerCase();
-    
+
     // Get all existing tags from tagTree
     const allTags = [];
-    
+
     if (tagTree && typeof tagTree === 'object') {
         if (tagTree._sub && typeof tagTree._sub === 'object') {
             Object.keys(tagTree._sub).forEach(tag => {
@@ -1700,23 +1713,23 @@ window.filterTagDropdown = function(input, key) {
             });
         }
     }
-    
+
     if (allTags.length === 0) return;
-    
+
     // Get already used tags in this note
     const usedTags = currentYamlData && currentYamlData[key] ? currentYamlData[key] : [];
-    
+
     // Filter available tags based on search and exclude used ones
-    const filteredTags = allTags.filter(tag => 
-        !usedTags.includes(tag) && 
+    const filteredTags = allTags.filter(tag =>
+        !usedTags.includes(tag) &&
         tag.toLowerCase().includes(searchTerm)
     );
-    
+
     if (filteredTags.length === 0) {
         window.hideTagDropdown();
         return;
     }
-    
+
     displayTagDropdown(input, filteredTags, key);
 };
 
@@ -1727,7 +1740,7 @@ function displayTagDropdown(input, tags, key) {
     // Remove existing dropdown
     const existing = document.querySelector('.yaml-tag-dropdown');
     if (existing) existing.remove();
-    
+
     const rect = input.getBoundingClientRect();
     const dropdown = document.createElement('div');
     dropdown.className = 'yaml-tag-dropdown';
@@ -1735,10 +1748,10 @@ function displayTagDropdown(input, tags, key) {
     dropdown.style.top = (rect.bottom + 2) + 'px';
     dropdown.style.left = rect.left + 'px';
     dropdown.style.minWidth = rect.width + 'px';
-    
+
     // Limit to 8 suggestions
     const displayTags = tags.slice(0, 8);
-    
+
     dropdown.innerHTML = displayTags.map(tag => `
         <div class="yaml-tag-suggestion" 
              tabindex="0"
@@ -1747,9 +1760,9 @@ function displayTagDropdown(input, tags, key) {
             <i class="fa-solid fa-tag"></i> ${tag}
         </div>
     `).join('');
-    
+
     document.body.appendChild(dropdown);
-    
+
     // Apply theme to the newly created dropdown
     setTimeout(() => applyThemeToElements(), 10);
 }
@@ -1757,9 +1770,9 @@ function displayTagDropdown(input, tags, key) {
 /**
  * Select tag from dropdown
  */
-window.selectTag = async function(tag, key) {
+window.selectTag = async function (tag, key) {
     await addYamlArrayItem(key, tag);
-    
+
     // Clear input and refocus
     const input = document.querySelector('.yaml-tag-input');
     if (input) {
@@ -1774,7 +1787,7 @@ window.selectTag = async function(tag, key) {
 /**
  * Hide tag dropdown
  */
-window.hideTagDropdown = function() {
+window.hideTagDropdown = function () {
     setTimeout(() => {
         const dropdown = document.querySelector('.yaml-tag-dropdown');
         if (dropdown) dropdown.remove();
@@ -1787,14 +1800,14 @@ window.hideTagDropdown = function() {
 async function addYamlArrayItem(key, item) {
     if (!currentYamlData) currentYamlData = {};
     if (!currentYamlData[key]) currentYamlData[key] = [];
-    
+
     // Filter out duplicates (case-sensitive comparison)
     const itemTrimmed = item.trim();
     if (currentYamlData[key].includes(itemTrimmed)) {
         console.log(`Tag "${itemTrimmed}" already exists, skipping`);
         return;
     }
-    
+
     currentYamlData[key].push(itemTrimmed);
     await saveYamlToFile();
     renderYamlProperties(currentYamlData, currentPath);
@@ -1803,14 +1816,14 @@ async function addYamlArrayItem(key, item) {
 /**
  * Remove item from YAML array
  */
-window.removeYamlArrayItem = async function(key, item) {
+window.removeYamlArrayItem = async function (key, item) {
     if (!currentYamlData || !currentYamlData[key]) return;
-    
+
     currentYamlData[key] = currentYamlData[key].filter(v => v !== item);
     if (currentYamlData[key].length === 0) {
         delete currentYamlData[key];
     }
-    
+
     await saveYamlToFile();
     renderYamlProperties(currentYamlData, currentPath);
 };
@@ -1818,10 +1831,10 @@ window.removeYamlArrayItem = async function(key, item) {
 /**
  * Add new YAML property
  */
-window.addYamlProperty = function(event) {
+window.addYamlProperty = function (event) {
     const button = event.target.closest('button');
     if (!button) return;
-    
+
     // Common Obsidian properties
     const commonProperties = [
         'tags', 'aliases', 'cssclass', 'cssclasses',
@@ -1832,16 +1845,16 @@ window.addYamlProperty = function(event) {
         'image', 'banner', 'cover',
         'link', 'url', 'source'
     ];
-    
+
     // Filter out properties that already exist
     const existingProps = currentYamlData ? Object.keys(currentYamlData) : [];
     const availableProps = commonProperties.filter(prop => !existingProps.includes(prop));
-    
+
     if (availableProps.length === 0 && existingProps.length > 0) {
         // If no common properties left, still show dropdown for custom entry
         availableProps.push('+ Custom property...');
     }
-    
+
     // Show dropdown
     showPropertyDropdown(button, availableProps);
 };
@@ -1853,33 +1866,33 @@ function showPropertyDropdown(button, properties) {
     // Remove existing dropdown
     const existing = document.querySelector('.yaml-property-dropdown');
     if (existing) existing.remove();
-    
+
     const rect = button.getBoundingClientRect();
     const dropdown = document.createElement('div');
     dropdown.className = 'yaml-property-dropdown';
     dropdown.style.top = `${rect.bottom + 4}px`;
     dropdown.style.left = `${rect.left}px`;
-    
+
     // Add search input
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.className = 'yaml-property-search';
     searchInput.placeholder = 'Type to filter or add custom...';
     dropdown.appendChild(searchInput);
-    
+
     // Add suggestions container
     const suggestionsDiv = document.createElement('div');
     suggestionsDiv.className = 'yaml-property-suggestions';
     dropdown.appendChild(suggestionsDiv);
-    
+
     // Display initial properties
     displayPropertySuggestions(suggestionsDiv, properties);
-    
+
     // Handle search input
     searchInput.addEventListener('input', (e) => {
         const value = e.target.value.toLowerCase();
         if (value) {
-            const filtered = properties.filter(prop => 
+            const filtered = properties.filter(prop =>
                 prop.toLowerCase().includes(value) && prop !== '+ Custom property...'
             );
             // Always show custom option when typing
@@ -1891,7 +1904,7 @@ function showPropertyDropdown(button, properties) {
             displayPropertySuggestions(suggestionsDiv, properties);
         }
     });
-    
+
     // Handle keyboard
     searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -1907,7 +1920,7 @@ function showPropertyDropdown(button, properties) {
             if (firstSuggestion) firstSuggestion.focus();
         }
     });
-    
+
     // Close on outside click
     setTimeout(() => {
         document.addEventListener('click', function closeDropdown(e) {
@@ -1917,10 +1930,10 @@ function showPropertyDropdown(button, properties) {
             }
         });
     }, 100);
-    
+
     document.body.appendChild(dropdown);
     searchInput.focus();
-    
+
     // Apply theme to the newly created dropdown
     setTimeout(() => applyThemeToElements(), 10);
 }
@@ -1983,24 +1996,24 @@ function getPropertyIcon(prop) {
 /**
  * Select property from dropdown
  */
-window.selectProperty = async function(propName) {
+window.selectProperty = async function (propName) {
     // Remove dropdown
     const dropdown = document.querySelector('.yaml-property-dropdown');
     if (dropdown) dropdown.remove();
-    
+
     // Sanitize property name
     const sanitizedKey = propName.trim().replace(/[^a-zA-Z0-9_-]/g, '');
     if (!sanitizedKey) {
         alert('Invalid property name. Use only letters, numbers, hyphens, and underscores.');
         return;
     }
-    
+
     if (!currentYamlData) currentYamlData = {};
     if (currentYamlData[sanitizedKey] !== undefined) {
         alert('Property already exists.');
         return;
     }
-    
+
     // Set default value based on property type (known properties)
     if (sanitizedKey === 'tags' || sanitizedKey === 'aliases' || sanitizedKey === 'cssclasses') {
         currentYamlData[sanitizedKey] = [];
@@ -2026,13 +2039,13 @@ window.selectProperty = async function(propName) {
 function showPropertyTypeSelector(propName) {
     const container = document.getElementById('yaml-properties-container');
     if (!container) return;
-    
+
     const rect = container.getBoundingClientRect();
     const dropdown = document.createElement('div');
     dropdown.className = 'yaml-type-selector';
     dropdown.style.top = `${rect.top + 100}px`;
     dropdown.style.left = `${rect.left + rect.width / 2 - 150}px`;
-    
+
     dropdown.innerHTML = `
         <div class="yaml-type-header">
             Choose type for "${propName}"
@@ -2087,7 +2100,7 @@ function showPropertyTypeSelector(propName) {
             </div>
         </div>
     `;
-    
+
     // Close on outside click
     setTimeout(() => {
         document.addEventListener('click', function closeSelector(e) {
@@ -2097,9 +2110,9 @@ function showPropertyTypeSelector(propName) {
             }
         });
     }, 100);
-    
+
     document.body.appendChild(dropdown);
-    
+
     // Apply theme to the newly created dropdown
     setTimeout(() => applyThemeToElements(), 10);
 }
@@ -2107,13 +2120,13 @@ function showPropertyTypeSelector(propName) {
 /**
  * Create property with specified type
  */
-window.createPropertyWithType = async function(propName, type) {
+window.createPropertyWithType = async function (propName, type) {
     // Remove type selector
     const selector = document.querySelector('.yaml-type-selector');
     if (selector) selector.remove();
-    
+
     if (!currentYamlData) currentYamlData = {};
-    
+
     // Set default value based on selected type
     switch (type) {
         case 'text':
@@ -2140,10 +2153,10 @@ window.createPropertyWithType = async function(propName, type) {
         default:
             currentYamlData[propName] = '';
     }
-    
+
     await saveYamlToFile();
     renderYamlProperties(currentYamlData, currentPath);
-    
+
     // Auto-focus the new property input
     setTimeout(() => {
         const newProp = document.querySelector(`.yaml-property[data-key="${propName}"] input, .yaml-property[data-key="${propName}"] textarea`);
@@ -2154,11 +2167,11 @@ window.createPropertyWithType = async function(propName, type) {
 /**
  * Delete YAML property
  */
-window.deleteYamlProperty = async function(key) {
+window.deleteYamlProperty = async function (key) {
     if (!currentYamlData || !key) return;
-    
+
     if (!confirm(`Delete property "${key}"?`)) return;
-    
+
     delete currentYamlData[key];
     await saveYamlToFile();
     renderYamlProperties(currentYamlData, currentPath);
@@ -2167,11 +2180,11 @@ window.deleteYamlProperty = async function(key) {
 /**
  * Edit link property - convert to input
  */
-window.editYamlLink = function(key, button) {
+window.editYamlLink = function (key, button) {
     const property = button.closest('.yaml-property');
     const valueDiv = property.querySelector('.yaml-value');
     const currentValue = currentYamlData[key] || '';
-    
+
     valueDiv.innerHTML = `
         <input type="text" 
                class="yaml-link-edit"
@@ -2181,7 +2194,7 @@ window.editYamlLink = function(key, button) {
                onblur="window.hideLinkAutocomplete(); window.saveLinkEdit('${key}', this.value)"
                onkeydown="if(event.key==='Enter') this.blur()">
     `;
-    
+
     const input = valueDiv.querySelector('input');
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
@@ -2190,7 +2203,7 @@ window.editYamlLink = function(key, button) {
 /**
  * Save link edit
  */
-window.saveLinkEdit = async function(key, value) {
+window.saveLinkEdit = async function (key, value) {
     await window.updateYamlProperty(key, value);
     // Re-render to show as link again
     renderYamlProperties(currentYamlData, currentPath);
@@ -2199,7 +2212,7 @@ window.saveLinkEdit = async function(key, value) {
 /**
  * Check if input should show link autocomplete
  */
-window.checkForLinkAutocomplete = function(input, key) {
+window.checkForLinkAutocomplete = function (input, key) {
     const value = input.value;
     if (value.includes('[[') && !value.endsWith(']]')) {
         window.showLinkAutocomplete(input, key);
@@ -2209,39 +2222,39 @@ window.checkForLinkAutocomplete = function(input, key) {
 /**
  * Show link autocomplete dropdown
  */
-window.showLinkAutocomplete = function(input, key) {
+window.showLinkAutocomplete = function (input, key) {
     // Remove existing dropdown
     const existing = document.querySelector('.yaml-link-dropdown');
     if (existing) existing.remove();
-    
+
     // Get all file paths from masterFileList
     const allFiles = masterFileList.map(file => {
         const path = file.path || file;
         return path.replace('.md', '').split('/').pop(); // Get filename without extension
     }).filter(Boolean).sort();
-    
+
     if (allFiles.length === 0) return;
-    
+
     const rect = input.getBoundingClientRect();
     const dropdown = document.createElement('div');
     dropdown.className = 'yaml-link-dropdown';
     dropdown.style.top = `${rect.bottom + 4}px`;
     dropdown.style.left = `${rect.left}px`;
     dropdown.style.minWidth = `${rect.width}px`;
-    
+
     // Get current input after [[
     const value = input.value;
     const linkStart = value.lastIndexOf('[[');
     const searchTerm = linkStart >= 0 ? value.substring(linkStart + 2).toLowerCase() : '';
-    
+
     // Filter files based on search
-    const filtered = searchTerm 
+    const filtered = searchTerm
         ? allFiles.filter(file => file.toLowerCase().includes(searchTerm))
         : allFiles.slice(0, 50); // Show first 50 if no search
-    
+
     displayLinkSuggestions(dropdown, filtered, input, key);
     document.body.appendChild(dropdown);
-    
+
     // Apply theme to the newly created dropdown
     setTimeout(() => applyThemeToElements(), 10);
 };
@@ -2249,9 +2262,9 @@ window.showLinkAutocomplete = function(input, key) {
 /**
  * Filter link autocomplete as user types
  */
-window.filterLinkAutocomplete = function(input, key) {
+window.filterLinkAutocomplete = function (input, key) {
     const value = input.value;
-    
+
     // Check if we're typing a wikilink
     if (value.includes('[[')) {
         const dropdown = document.querySelector('.yaml-link-dropdown');
@@ -2263,13 +2276,13 @@ window.filterLinkAutocomplete = function(input, key) {
                 const path = file.path || file;
                 return path.replace('.md', '').split('/').pop();
             }).filter(Boolean).sort();
-            
+
             const linkStart = value.lastIndexOf('[[');
             const searchTerm = linkStart >= 0 ? value.substring(linkStart + 2).toLowerCase() : '';
             const filtered = searchTerm
                 ? allFiles.filter(file => file.toLowerCase().includes(searchTerm))
                 : allFiles.slice(0, 50);
-            
+
             displayLinkSuggestions(dropdown, filtered, input, key);
         }
     } else {
@@ -2289,7 +2302,7 @@ function displayLinkSuggestions(container, files, input, key) {
             <i class="fa-solid fa-file"></i> ${file}
         </div>
     `).join('');
-    
+
     if (files.length === 0) {
         container.innerHTML = '<div class="yaml-link-suggestion yaml-custom"><em>No matches found</em></div>';
     }
@@ -2298,13 +2311,13 @@ function displayLinkSuggestions(container, files, input, key) {
 /**
  * Select link from autocomplete
  */
-window.selectLink = function(fileName, key) {
+window.selectLink = function (fileName, key) {
     const input = document.querySelector('.yaml-property[data-key="' + key + '"] input');
     if (!input) return;
-    
+
     const value = input.value;
     const linkStart = value.lastIndexOf('[[');
-    
+
     if (linkStart >= 0) {
         // Replace from [[ to end with [[filename]]
         const before = value.substring(0, linkStart);
@@ -2312,7 +2325,7 @@ window.selectLink = function(fileName, key) {
     } else {
         input.value = '[[' + fileName + ']]';
     }
-    
+
     window.hideLinkAutocomplete();
     input.focus();
 };
@@ -2320,7 +2333,7 @@ window.selectLink = function(fileName, key) {
 /**
  * Hide link autocomplete dropdown
  */
-window.hideLinkAutocomplete = function() {
+window.hideLinkAutocomplete = function () {
     setTimeout(() => {
         const dropdown = document.querySelector('.yaml-link-dropdown');
         if (dropdown) dropdown.remove();
@@ -2335,33 +2348,33 @@ async function saveYamlToFile() {
         console.error('❌ No currentPath set');
         return;
     }
-    
+
     try {
         console.log('💾 Starting YAML save for:', currentPath);
         console.log('Current YAML data:', JSON.stringify(currentYamlData, null, 2));
         console.log('Current mode:', isReadingMode ? 'PREVIEW' : 'EDIT');
-        
+
         // Set flag to prevent FILE handler from interfering
         window._yamlSaveInProgress = true;
         console.log('🚩 Set _yamlSaveInProgress flag');
-        
+
         // Request the raw markdown
         console.log('📡 Requesting GET_FILE...');
         await conn.send('GET_FILE', { path: currentPath });
-        
+
         // Wait for the file content (will be handled by FILE message handler)
         console.log('⏳ Waiting 200ms for file content...');
         await new Promise(resolve => setTimeout(resolve, 200));
-        
+
         // Get the raw content from editor (FILE handler loads it there)
         const rawContent = easyMDE ? easyMDE.value() : '';
         console.log('📝 Raw content length:', rawContent.length);
         console.log('First 200 chars:', rawContent.substring(0, 200));
-        
+
         if (!rawContent) {
             throw new Error('Could not fetch file content');
         }
-        
+
         // Extract body content (without old YAML)
         let bodyContent = rawContent;
         const yamlMatch = rawContent.match(/^---\n[\s\S]*?\n---\n?/);
@@ -2373,7 +2386,7 @@ async function saveYamlToFile() {
             console.log('ℹ️ No existing YAML frontmatter found');
         }
         console.log('Body content length:', bodyContent.length);
-        
+
         // Reconstruct file with new YAML
         let newContent = bodyContent;
         if (currentYamlData && Object.keys(currentYamlData).length > 0) {
@@ -2389,16 +2402,16 @@ async function saveYamlToFile() {
         }
         console.log('New content length:', newContent.length);
         console.log('First 200 chars of new content:', newContent.substring(0, 200));
-        
+
         // Update stored content
         contentWithoutYaml = bodyContent;
-        
+
         // Save to file
         console.log('💾 Sending SAVE_FILE command...');
         await conn.send('SAVE_FILE', { path: currentPath, data: newContent });
-        
+
         console.log('✅ YAML saved, refreshing preview...');
-        
+
         // If in preview mode, refresh the rendered view
         if (isReadingMode) {
             console.log('📺 Preview mode: refreshing rendered view');
@@ -2415,9 +2428,9 @@ async function saveYamlToFile() {
                 easyMDE.codemirror.setCursor(cursorPos);
             }
         }
-        
+
         console.log('🎉 YAML save complete!');
-        
+
     } catch (err) {
         console.error('❌ Failed to save YAML:', err);
         console.error('Error stack:', err.stack);
@@ -2435,19 +2448,19 @@ async function saveYamlToFile() {
 function renderSidebar() {
     const container = document.getElementById('file-tree');
     container.innerHTML = '';
-    
+
     const tree = currentView === 'folders' ? folderTree : tagTree;
     const iconSet = { folder: icons.folder, tag: icons.tag };
-    
+
     const onNodeClick = (fullPath, files) => {
         if (currentView === 'folders') {
             selectedFolderPath = fullPath;
         }
         prepareNoteList(files);
     };
-    
+
     renderNode(tree, container, 0, '', currentView, iconSet, onNodeClick);
-    
+
     // Reapply theme to newly rendered elements
     setTimeout(() => applyThemeToElements(), 10);
 }
@@ -2458,13 +2471,13 @@ function renderSidebar() {
 function prepareNoteList(files) {
     currentList = prepareList(files);
     renderedCount = 0;
-    
+
     // Clear the container before rendering new list
     const container = document.getElementById('note-list');
     if (container) {
         container.innerHTML = '';
     }
-    
+
     renderBatch();
 }
 
@@ -2475,32 +2488,32 @@ function renderBatch() {
     const container = document.getElementById('note-list');
     const batchSize = 50;
     const end = Math.min(renderedCount + batchSize, currentList.length);
-    
+
     for (let i = renderedCount; i < end; i++) {
         const file = currentList[i];
         const card = document.createElement('div');
         card.className = 'note-card file-tree-item';
         card.dataset.path = file.path;
         card.dataset.type = 'file';
-        
+
         const title = document.createElement('div');
         title.className = 'note-title';
         title.textContent = file.path.split('/').pop().replace('.md', '');
-        
+
         card.appendChild(title);
         card.addEventListener('click', () => loadFile(file.path));
         container.appendChild(card);
     }
-    
+
     renderedCount = end;
 }
 
 /**
  * Navigate back to previous file
  */
-window.navigateBack = function() {
+window.navigateBack = function () {
     if (navigationHistory.length === 0) return;
-    
+
     const previousPath = navigationHistory.pop();
     // Set flag to prevent adding current path back to history
     const tempHistory = [...navigationHistory];
@@ -2521,11 +2534,11 @@ async function loadFile(path) {
             navigationHistory.shift();
         }
     }
-    
+
     currentPath = path;
     const filenameEl = document.getElementById('filename');
     const filename = path.split('/').pop().replace('.md', '');
-    
+
     // Add back button if history exists
     if (navigationHistory.length > 0) {
         filenameEl.innerHTML = `
@@ -2537,7 +2550,7 @@ async function loadFile(path) {
     } else {
         filenameEl.innerHTML = `<span>${filename}</span>`;
     }
-    
+
     // DEFAULT TO PREVIEW MODE
     isReadingMode = true;
     const btn = document.getElementById('view-btn');
@@ -2545,7 +2558,7 @@ async function loadFile(path) {
     const loading = document.getElementById('preview-loading');
     const editorEl = document.querySelector('.EasyMDEContainer');
     const saveBtn = document.getElementById('save-btn');
-    
+
     if (btn) {
         btn.style.display = 'block';
         btn.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
@@ -2558,7 +2571,7 @@ async function loadFile(path) {
     if (editorEl) editorEl.style.display = 'none';
     if (loading) loading.style.display = 'flex';
     if (preview) preview.style.display = 'none';
-    
+
     await conn.send('GET_RENDERED_FILE', { path });
 }
 
@@ -2568,21 +2581,21 @@ async function loadFile(path) {
 function renderBacklinks(links) {
     const container = document.getElementById('backlinks-list');
     if (!container) return;
-    
+
     container.innerHTML = '';
-    
+
     if (!links || links.length === 0) {
         container.innerHTML = '<div style="padding: 10px; color: var(--text-muted); font-style: italic;">No backlinks</div>';
         return;
     }
-    
+
     // Sort backlinks alphabetically by filename
     const sortedLinks = [...links].sort((a, b) => {
         const nameA = a.split('/').pop().replace('.md', '').toLowerCase();
         const nameB = b.split('/').pop().replace('.md', '').toLowerCase();
         return nameA.localeCompare(nameB);
     });
-    
+
     sortedLinks.forEach(link => {
         const item = document.createElement('a');
         item.className = 'backlink-item';
@@ -2610,9 +2623,9 @@ function renderLocalGraph(centerPath) {
     const tagColor = style.getPropertyValue('--text-accent').trim() || '#e91e63';
 
     const centerNode = masterFileList.find(f => f.path === centerPath);
-    if (!centerNode) { 
-        container.innerHTML = '<div style="color:' + textMuted + '; text-align:center; padding-top:40px; font-style:italic;">No connections.</div>'; 
-        return; 
+    if (!centerNode) {
+        container.innerHTML = '<div style="color:' + textMuted + '; text-align:center; padding-top:40px; font-style:italic;">No connections.</div>';
+        return;
     }
 
     const nodes = new Set();
@@ -2646,8 +2659,8 @@ function renderLocalGraph(centerPath) {
         }
     });
 
-    const graphNodes = Array.from(nodes).map(id => ({ 
-        id: id, 
+    const graphNodes = Array.from(nodes).map(id => ({
+        id: id,
         name: id.startsWith('#') ? id : id.split('/').pop().replace('.md', ''),
         val: id === centerPath ? 20 : 5,
         color: id === centerPath ? accent : (id.startsWith('#') ? tagColor : textMuted),
@@ -2679,38 +2692,38 @@ function renderLocalGraph(centerPath) {
                 const label = node.name;
                 const fontSize = 10 / globalScale;
                 ctx.font = `${fontSize}px Sans-Serif`;
-                
+
                 // Draw node circle (4px radius for cleaner look)
                 ctx.fillStyle = node.color;
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, 4, 0, 2 * Math.PI, false);
                 ctx.fill();
-                
+
                 // Always position label to the right with more spacing
                 const labelWidth = ctx.measureText(label).width;
                 const labelPadding = 4;
                 const labelOffset = 8;
                 const labelX = node.x + labelOffset;
                 const labelY = node.y;
-                
+
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'middle';
-                
+
                 // Draw semi-transparent background behind label
                 const bgX = labelX - labelPadding;
                 ctx.fillStyle = bg + 'dd'; // Add alpha for transparency
                 ctx.fillRect(
-                    bgX, 
-                    labelY - fontSize/2 - labelPadding/2, 
-                    labelWidth + labelPadding * 2, 
+                    bgX,
+                    labelY - fontSize / 2 - labelPadding / 2,
+                    labelWidth + labelPadding * 2,
                     fontSize + labelPadding
                 );
-                
+
                 // Draw label text
                 ctx.fillStyle = node.isCenter ? accent : text;
                 ctx.fillText(label, labelX, labelY);
             })
-            .onNodeClick(node => { 
+            .onNodeClick(node => {
                 if (node.id.startsWith('#')) {
                     filterByTag(node.id);
                 } else {
@@ -2729,12 +2742,12 @@ function initSidebarResize() {
     let isResizing = false;
     let startX = 0;
     let startWidth = 0;
-    
+
     const savedWidth = localStorage.getItem('sidebarWidth');
     if (savedWidth) {
         sidebar.style.width = savedWidth + 'px';
     }
-    
+
     handle.addEventListener('mousedown', (e) => {
         isResizing = true;
         startX = e.clientX;
@@ -2743,14 +2756,14 @@ function initSidebarResize() {
         document.body.style.cursor = 'col-resize';
         e.preventDefault();
     });
-    
+
     document.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
         const delta = e.clientX - startX;
         const newWidth = Math.max(200, Math.min(500, startWidth + delta));
         sidebar.style.width = newWidth + 'px';
     });
-    
+
     document.addEventListener('mouseup', () => {
         if (isResizing) {
             isResizing = false;
@@ -2781,18 +2794,18 @@ function applyPanelState() {
     const mainPanel = document.getElementById('context-panel');
     const graphCanvas = document.getElementById('graph-canvas');
     const blList = document.getElementById('backlinks-list');
-    
+
     if (graphCanvas) graphCanvas.style.display = panelState.graph ? 'block' : 'none';
     if (blList) blList.style.display = panelState.backlinks ? 'block' : 'none';
-    
+
     const iconGraph = document.getElementById('icon-graph');
     const iconBacklinks = document.getElementById('icon-backlinks');
     if (iconGraph) iconGraph.className = panelState.graph ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
     if (iconBacklinks) iconBacklinks.className = panelState.backlinks ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
-    
+
     if (graphCont) graphCont.style.flex = panelState.graph ? '1' : '0 0 auto';
     if (blCont) blCont.style.flex = panelState.backlinks ? '1' : '0 0 auto';
-    
+
     if (mainPanel) {
         if (!panelState.graph && !panelState.backlinks) {
             mainPanel.style.height = '35px';
@@ -2813,7 +2826,7 @@ function updateIcons() {
     const isFocus = document.getElementById('app-container')?.classList.contains('focus-mode');
     const themeBtn = document.getElementById('theme-btn');
     const focusBtn = document.getElementById('focus-btn');
-    
+
     if (themeBtn) {
         themeBtn.innerHTML = isLight ? '<i class="fa-solid fa-moon"></i>' : '<i class="fa-solid fa-sun"></i>';
     }
@@ -2833,9 +2846,9 @@ async function toggleViewMode() {
     const loading = document.getElementById('preview-loading');
     const editorEl = document.querySelector('.EasyMDEContainer');
     const saveBtn = document.getElementById('save-btn');
-    
+
     console.log('🔄 Toggle view mode:', isReadingMode ? 'READ' : 'EDIT');
-    
+
     if (isReadingMode) {
         btn.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
         btn.title = 'Switch to Edit Mode';
@@ -2843,12 +2856,40 @@ async function toggleViewMode() {
             saveBtn.classList.add('hidden');
             saveBtn.style.display = 'none';
         }
-        
+
         editorEl.style.display = 'none';
         loading.style.display = 'flex';
         preview.style.display = 'none';
-        
-        await conn.send('GET_RENDERED_FILE', { path: currentPath });
+
+        // Use OPEN_FILE to get either plugin view (Kanban) or markdown fallback
+        const response = await conn.send('OPEN_FILE', { path: currentPath });
+
+        // Handle response directly here since we need to support both types
+        if (response && response.data) {
+            const data = response.data;
+
+            // 1. Plugin View (Kanban, etc.)
+            if (data.renderedHTML) {
+                renderPluginData(data);
+                if (loading) loading.style.display = 'none';
+                if (preview) preview.style.display = 'block';
+            }
+            // 2. Standard Markdown (Fallback)
+            else if (data.html) {
+                // We need to manually trigger the full render pipeline
+                // This duplicates some logic from handleMessage('RENDERED_FILE')
+                // but ensures we handle the wrapped response correctly
+
+                if (data.css) applyTheme(data.css);
+
+                currentYamlData = data.yaml;
+                renderYamlProperties(data.yaml, currentPath);
+
+                renderPreview(data.html);
+                renderBacklinks(data.backlinks || []);
+                if (panelState.graph) renderLocalGraph(currentPath);
+            }
+        }
     } else {
         btn.innerHTML = '<i class="fa-regular fa-eye"></i>';
         btn.title = 'Switch to Preview Mode';
@@ -2856,11 +2897,11 @@ async function toggleViewMode() {
             saveBtn.classList.remove('hidden');
             saveBtn.style.display = 'block';
         }
-        
+
         preview.style.display = 'none';
         loading.style.display = 'none';
         editorEl.style.display = 'flex';
-        
+
         await conn.send('GET_FILE', { path: currentPath });
         if (easyMDE) easyMDE.codemirror.refresh();
     }
@@ -2925,13 +2966,13 @@ async function refreshTree() {
 function doSearch(e) {
     const val = e.target.value.toLowerCase();
     const header = document.querySelector('#pane-notes .pane-header');
-    
+
     if (!val) {
         prepareNoteList(masterFileList.filter(f => !f.path.includes('/')));
         if (header) header.innerText = 'NOTES';
     } else {
-        const results = masterFileList.filter(f => 
-            f.path.toLowerCase().includes(val) || 
+        const results = masterFileList.filter(f =>
+            f.path.toLowerCase().includes(val) ||
             (f.tags && f.tags.some(t => t.toLowerCase().includes(val)))
         );
         prepareNoteList(results);
@@ -2944,23 +2985,23 @@ function doSearch(e) {
  */
 async function createNote() {
     let parentDir = '';
-    
+
     if (selectedFolderPath) {
         parentDir = selectedFolderPath;
     } else if (currentPath && currentPath.includes('/')) {
         parentDir = currentPath.substring(0, currentPath.lastIndexOf('/')) + '/';
     }
-    
+
     const name = prompt(`New Note in ${parentDir || 'Root'}:`, 'Untitled');
-    
+
     if (name) {
         const cleanName = name.replace(/\.md$/, '');
         const fullPath = parentDir + cleanName + '.md';
-        
+
         await conn.send('CREATE_FILE', { path: fullPath });
         await conn.send('GET_TREE');
         await loadFile(fullPath);
-        
+
         if (isReadingMode) await toggleViewMode();
     }
 }
@@ -2970,15 +3011,15 @@ async function createNote() {
  */
 async function createFolder() {
     let parentDir = '';
-    
+
     if (selectedFolderPath) {
         parentDir = selectedFolderPath;
     } else if (currentPath && currentPath.includes('/')) {
         parentDir = currentPath.substring(0, currentPath.lastIndexOf('/')) + '/';
     }
-    
+
     const name = prompt(`New Folder in ${parentDir || 'Root'}:`, 'New Folder');
-    
+
     if (name) {
         const fullPath = parentDir + name;
         await conn.send('CREATE_FOLDER', { path: fullPath });
@@ -3013,22 +3054,22 @@ async function openDailyNote() {
         alert('Not connected to vault.');
         return;
     }
-    
+
     try {
         console.log('📅 Sending OPEN_DAILY_NOTE command...');
         const response = await conn.send('OPEN_DAILY_NOTE', {});
         console.log('📅 Response received:', response);
-        
+
         // Response structure is {type, data, meta} from HTTP callback
         const data = response.data || response;
-        
+
         if (data.success && data.path) {
             console.log('📅 Loading file:', data.path);
-            
+
             // Clear welcome screen before loading
             const preview = document.getElementById('custom-preview');
             if (preview) preview.innerHTML = '';
-            
+
             await loadFile(data.path);
             console.log('📅 File loaded successfully');
         } else if (data.message) {
@@ -3069,7 +3110,7 @@ async function ctxOpen() {
 
 async function ctxNewNote() {
     hideContextMenu();
-    
+
     let parentDir = '';
     if (ctxTarget) {
         if (ctxTarget.endsWith('/')) {
@@ -3079,12 +3120,12 @@ async function ctxNewNote() {
         }
     }
     if (parentDir === '/') parentDir = '';
-    
+
     const name = prompt(`New Note in ${parentDir || 'Root'}:`, 'Untitled');
     if (name) {
         const cleanName = name.replace(/\.md$/, '');
         const fullPath = parentDir + cleanName + '.md';
-        
+
         await conn.send('CREATE_FILE', { path: fullPath });
         await conn.send('GET_TREE');
         await loadFile(fullPath);
@@ -3093,7 +3134,7 @@ async function ctxNewNote() {
 
 async function ctxNewFolder() {
     hideContextMenu();
-    
+
     let parentDir = '';
     if (ctxTarget) {
         if (ctxTarget.endsWith('/')) {
@@ -3103,7 +3144,7 @@ async function ctxNewFolder() {
         }
     }
     if (parentDir === '/') parentDir = '';
-    
+
     const name = prompt(`New Folder in ${parentDir || 'Root'}:`, 'New Folder');
     if (name) {
         const fullPath = parentDir + name;
@@ -3114,40 +3155,40 @@ async function ctxNewFolder() {
 
 async function ctxRename() {
     hideContextMenu();
-    
+
     if (!ctxTarget || ctxTarget.length === 0) {
         console.error('ctxRename: No target path');
         return;
     }
-    
+
     const isFolder = ctxTargetType === 'folder';
     const isFile = ctxTargetType === 'file';
     const cleanTarget = ctxTarget.endsWith('/') ? ctxTarget.slice(0, -1) : ctxTarget;
-    
+
     let defaultName = cleanTarget;
     if (isFile && cleanTarget.endsWith('.md')) {
         defaultName = cleanTarget.slice(0, -3);
     } else if (isFolder) {
         defaultName = cleanTarget.split('/').pop();
     }
-    
+
     const promptText = isFolder ? 'Rename Folder:' : 'Rename / Move (Enter new path):';
     const newPathInput = prompt(promptText, defaultName);
-    
+
     if (newPathInput && newPathInput !== defaultName) {
         let newPath = newPathInput;
-        
+
         if (isFile && cleanTarget.endsWith('.md') && !newPath.endsWith('.md')) {
             newPath += '.md';
         }
-        
+
         if (isFolder) {
             const parentPath = cleanTarget.substring(0, cleanTarget.lastIndexOf('/'));
             if (parentPath) {
                 newPath = parentPath + '/' + newPath;
             }
         }
-        
+
         await conn.send('RENAME_FILE', { path: cleanTarget, data: { newPath } });
         await conn.send('GET_TREE');
         if (isFile && cleanTarget.endsWith('.md')) {
@@ -3158,17 +3199,17 @@ async function ctxRename() {
 
 async function ctxDelete() {
     hideContextMenu();
-    
+
     if (!ctxTarget || ctxTarget.length === 0) {
         console.error('ctxDelete: No target path');
         return;
     }
-    
+
     const isFolder = ctxTargetType === 'folder';
     const cleanTarget = ctxTarget.endsWith('/') ? ctxTarget.slice(0, -1) : ctxTarget;
     const itemType = isFolder ? 'folder' : 'file';
     const displayName = isFolder ? cleanTarget.split('/').pop() : cleanTarget.split('/').pop();
-    
+
     if (confirm(`Are you sure you want to delete this ${itemType}: "${displayName}"?`)) {
         await conn.send('DELETE_FILE', { path: cleanTarget });
         await conn.send('GET_TREE');
@@ -3189,14 +3230,14 @@ function hideContextMenu() {
 function renderContextMenu(container, items) {
     items.forEach(item => {
         if (item.show === false) return;
-        
+
         if (item.type === 'separator') {
             const sep = document.createElement('div');
             sep.className = 'menu-separator';
             container.appendChild(sep);
             return;
         }
-        
+
         const div = document.createElement('div');
         div.className = `menu-item ${item.danger ? 'delete' : ''}`;
         div.innerHTML = `<i class="fa-solid ${item.icon}"></i> ${item.label}`;
@@ -3216,45 +3257,45 @@ function handleContextMenuDisplay(e) {
     if (e.target.closest('#context-menu') || e.target.closest('.context-menu')) {
         return;
     }
-    
+
     e.preventDefault();
     e.stopPropagation();
-    
+
     const menu = document.getElementById('context-menu');
     if (!menu) return;
-    
+
     const target = e.target.closest('.file-tree-item');
-    
+
     menu.innerHTML = '';
     menu.style.display = 'block';
-    
+
     let x = e.clientX;
     let y = e.clientY;
-    
+
     if (x + 200 > window.innerWidth) x = window.innerWidth - 210;
     if (y + 300 > window.innerHeight) y = window.innerHeight - 310;
-    
+
     menu.style.left = `${x}px`;
     menu.style.top = `${y}px`;
-    
+
     if (target) {
         const path = target.getAttribute('data-path');
         const type = target.getAttribute('data-type');
-        
+
         if (!path || path.length === 0) {
             console.error('Context menu target missing data-path:', target);
             return;
         }
-        
+
         // Don't show context menu for tags
         if (type === 'tag' || path.startsWith('#')) {
             menu.style.display = 'none';
             return;
         }
-        
+
         ctxTarget = path;
         ctxTargetType = type;
-        
+
         renderContextMenu(menu, [
             { label: 'Open', icon: 'fa-folder-open', action: 'ctxOpen', show: type === 'file' },
             { label: 'New Note', icon: 'fa-plus', action: 'ctxNewNote' },
@@ -3265,7 +3306,7 @@ function handleContextMenuDisplay(e) {
         ]);
     } else {
         ctxTarget = selectedFolderPath || '';
-        
+
         renderContextMenu(menu, [
             { label: 'New Note Here', icon: 'fa-plus', action: 'ctxNewNote' },
             { label: 'New Folder Here', icon: 'fa-folder', action: 'ctxNewFolder' }
@@ -3303,3 +3344,11 @@ window.ctxNewNote = ctxNewNote;
 window.ctxNewFolder = ctxNewFolder;
 window.ctxRename = ctxRename;
 window.ctxDelete = ctxDelete;
+
+// Debug: Log all window functions to verify they're accessible
+console.log('🔍 Window functions registered:', {
+    togglePluginView: typeof window.togglePluginView,
+    toggleYamlCollapse: typeof window.toggleYamlCollapse,
+    updateYamlProperty: typeof window.updateYamlProperty,
+    addYamlProperty: typeof window.addYamlProperty
+});
