@@ -1174,6 +1174,16 @@ class MicroServer extends obsidian.Plugin {
           } catch (openError) {
             console.error('❌ Failed to open file:', openError);
           }
+        } else {
+          // Leaf exists but might not be rendering - force a refresh
+          try {
+            console.log('🔄 Kanban leaf exists, forcing refresh...');
+            await kanbanLeaf.openFile(file);
+            // Give it a moment to actually render
+            await new Promise(resolve => setTimeout(resolve, 150));
+          } catch (refreshError) {
+            console.error('❌ Failed to refresh kanban leaf:', refreshError);
+          }
         }
         
         console.log('🎯 Attempting to extract HTML, kanbanLeaf exists:', !!kanbanLeaf);
@@ -1189,10 +1199,25 @@ class MicroServer extends obsidian.Plugin {
           });
           
           if (view.containerEl) {
-            const kanbanBoard = view.containerEl.querySelector('.kanban-plugin');
+            // Wait for Kanban to render (it may be async)
+            // Try multiple times with increasing delays
+            let kanbanBoard = null;
+            let attempts = 0;
+            const maxAttempts = 5;
+            
+            while (!kanbanBoard && attempts < maxAttempts) {
+              if (attempts > 0) {
+                await new Promise(resolve => setTimeout(resolve, 100 * attempts)); // 100ms, 200ms, 300ms, 400ms
+                console.log(`⏳ Retry ${attempts}/${maxAttempts} - waiting for Kanban DOM...`);
+              }
+              
+              kanbanBoard = view.containerEl.querySelector('.kanban-plugin');
+              attempts++;
+            }
             
             console.log('🔍 Kanban board element:', {
               found: !!kanbanBoard,
+              attempts: attempts,
               selector: '.kanban-plugin',
               containerHTML: view.containerEl.innerHTML.substring(0, 500)
             });
