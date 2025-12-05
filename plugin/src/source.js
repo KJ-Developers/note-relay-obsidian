@@ -2059,10 +2059,31 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     }
     
     const emailStatus = identitySection.createDiv({ cls: 'setting-item-description' });
-    emailStatus.style.cssText = 'margin: -10px 0 15px 0; padding-left: 0;';
+    emailStatus.style.cssText = 'margin: -10px 0 15px 0; padding-left: 0; display: flex; align-items: center; gap: 10px;';
     
     if (this.plugin.settings.userEmail) {
-      emailStatus.innerHTML = '✅ <strong style="color: #4caf50;">Email saved</strong> - Remote Access and Analytics unlocked';
+      // Create badge based on license tier
+      const tier = this.plugin.settings.licenseTier || 'free';
+      let badgeText, badgeColor, badgeBackground;
+      
+      if (tier === 'pro') {
+        badgeText = 'PRO PLAN';
+        badgeColor = '#ffd700';  // Gold
+        badgeBackground = 'rgba(255, 215, 0, 0.15)';
+      } else if (tier === 'base') {
+        badgeText = 'BASE PLAN';
+        badgeColor = 'var(--interactive-accent)';
+        badgeBackground = 'var(--background-modifier-hover)';
+      } else {
+        badgeText = 'FREE TIER';
+        badgeColor = 'var(--text-muted)';
+        badgeBackground = 'var(--background-modifier-border)';
+      }
+      
+      emailStatus.innerHTML = `
+        ✅ <strong style="color: #4caf50;">Email saved</strong> - Remote Access and Analytics unlocked
+        <span class="tier-badge" style="padding: 2px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; color: ${badgeColor}; background: ${badgeBackground};">${badgeText}</span>
+      `;
     } else {
       emailStatus.setText('⚠️ Enter your email to enable Remote Access and Usage Dashboard');
     }
@@ -2362,10 +2383,33 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     // GUEST MANAGER SECTION
     container.createEl('h3', { text: 'Guest Access Control', cls: 'setting-item-heading' });
     
+    // Check if user has Pro tier
+    const isPro = this.plugin.settings.licenseTier === 'pro';
+    
     const guestManagerDiv = container.createDiv();
     guestManagerDiv.style.cssText = 'padding: 20px; background: var(--background-secondary); border-radius: 6px; margin: 20px 0;';
     
-    // Add Guest Form
+    // Show upgrade CTA if not Pro
+    if (!isPro) {
+      const upgradeCTA = guestManagerDiv.createDiv();
+      upgradeCTA.style.cssText = 'padding: 20px; text-align: center; background: rgba(255, 215, 0, 0.1); border: 2px solid #ffd700; border-radius: 6px; color: var(--text-normal);';
+      upgradeCTA.innerHTML = `
+        <div style="font-size: 32px; margin-bottom: 10px;">🔒</div>
+        <div style="font-weight: bold; font-size: 1.1em; margin-bottom: 8px;">Pro Feature: Guest Vault Sharing</div>
+        <div style="color: var(--text-muted); margin-bottom: 15px;">
+          Upgrade to <strong style="color: #ffd700;">Pro Plan</strong> to share your vault with guests using read-only or read-write access.
+        </div>
+        <button class="mod-cta" style="padding: 10px 30px; background: #ffd700; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+          Upgrade to Pro
+        </button>
+      `;
+      upgradeCTA.querySelector('button').onclick = () => {
+        window.open('https://noterelay.io/dashboard');
+      };
+      return; // Stop rendering guest controls
+    }
+    
+    // Add Guest Form (only for Pro users)
     guestManagerDiv.createEl('h4', { text: 'Add New Guest' });
     
     const addGuestForm = guestManagerDiv.createDiv();
@@ -2377,6 +2421,7 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
       placeholder: 'guest@example.com' 
     });
     emailInput.style.cssText = 'padding: 8px; border-radius: 4px; border: 1px solid var(--background-modifier-border); background: var(--background-primary);';
+    emailInput.disabled = !isPro;
     
     // Label input
     const labelInput = addGuestForm.createEl('input', { 
@@ -2384,6 +2429,7 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
       placeholder: 'Display name (e.g., "Bob")' 
     });
     labelInput.style.cssText = 'padding: 8px; border-radius: 4px; border: 1px solid var(--background-modifier-border); background: var(--background-primary);';
+    labelInput.disabled = !isPro;
     
     // Password input
     const guestPassInput = addGuestForm.createEl('input', { 
@@ -2391,16 +2437,19 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
       placeholder: 'Password for guest' 
     });
     guestPassInput.style.cssText = 'padding: 8px; border-radius: 4px; border: 1px solid var(--background-modifier-border); background: var(--background-primary);';
+    guestPassInput.disabled = !isPro;
     
     // Mode selector
     const modeSelect = addGuestForm.createEl('select');
     modeSelect.style.cssText = 'padding: 8px; border-radius: 4px; border: 1px solid var(--background-modifier-border); background: var(--background-primary);';
     modeSelect.createEl('option', { text: 'Read-Write', value: 'rw' });
     modeSelect.createEl('option', { text: 'Read-Only', value: 'ro' });
+    modeSelect.disabled = !isPro;
     
     // Add button
     const addGuestBtn = addGuestForm.createEl('button', { text: 'Add Guest' });
     addGuestBtn.style.cssText = 'padding: 8px 16px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;';
+    addGuestBtn.disabled = !isPro;
     addGuestBtn.onclick = async () => {
       const email = emailInput.value.trim();
       const label = labelInput.value.trim();
