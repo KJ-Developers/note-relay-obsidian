@@ -2025,15 +2025,23 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
         .setButtonText('Connect')
         .setCta()
         .onClick(async () => {
-          if (tempEmail) {
-            // Commit staged value to settings
-            this.plugin.settings.userEmail = tempEmail;
-            await this.plugin.saveSettings();
-            new obsidian.Notice('✅ Account connected - Remote features unlocked');
-            this.display(); // NOW refresh to show connected state
-          } else {
+          if (!tempEmail) {
             new obsidian.Notice('Please enter your email address');
+            return;
           }
+          
+          // Validate email format
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailRegex.test(tempEmail)) {
+            new obsidian.Notice('❌ Please enter a valid email address');
+            return;
+          }
+          
+          // Commit staged value to settings
+          this.plugin.settings.userEmail = tempEmail;
+          await this.plugin.saveSettings();
+          new obsidian.Notice('✅ Account connected');
+          this.display(); // NOW refresh to show connected state
         })
       );
     
@@ -2098,8 +2106,16 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
         badgeBackground = 'var(--background-modifier-border)';
       }
       
+      // Dynamic message based on tier
+      let statusMessage;
+      if (tier === 'free') {
+        statusMessage = 'Email saved - Analytics unlocked (Upgrade for Remote Access)';
+      } else {
+        statusMessage = 'Email saved - Remote Access and Analytics unlocked';
+      }
+      
       emailStatus.innerHTML = `
-        ✅ <strong style="color: #4caf50;">Email saved</strong> - Remote Access and Analytics unlocked
+        ✅ <strong style="color: #4caf50;">${statusMessage}</strong>
         <span class="tier-badge" style="padding: 2px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; color: ${badgeColor}; background: ${badgeBackground};">${badgeText}</span>
       `;
     } else {
