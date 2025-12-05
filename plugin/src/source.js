@@ -2299,7 +2299,30 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
       return; // STOP RENDERING THE REST OF THE TAB
     }
     
+    // Define tier (base and pro both get remote access)
+    const isPro = ['base', 'pro'].includes(this.plugin.settings.licenseTier);
+    
     container.createEl('h3', { text: 'Remote Relay Configuration' });
+    
+    // Show upgrade CTA if not Pro/Base (Glass Wall UX)
+    if (!isPro) {
+      const upgradeBanner = container.createDiv();
+      upgradeBanner.style.cssText = 'padding: 20px; margin-bottom: 20px; text-align: center; background: rgba(255, 215, 0, 0.1); border: 2px solid #ffd700; border-radius: 6px;';
+      upgradeBanner.innerHTML = `
+        <div style="font-size: 32px; margin-bottom: 10px;">🚀</div>
+        <div style="font-weight: bold; font-size: 1.2em; margin-bottom: 8px;">Upgrade to Unlock Remote Access</div>
+        <div style="color: var(--text-muted); margin-bottom: 15px;">
+          Access your vault from anywhere with global relay connectivity.<br>
+          Available on <strong style="color: #ffd700;">Base ($1.99/mo)</strong> and <strong style="color: #ffd700;">Pro ($3.99/mo)</strong> plans.
+        </div>
+        <button class="mod-cta" style="padding: 10px 30px; background: #ffd700; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+          View Plans
+        </button>
+      `;
+      upgradeBanner.querySelector('button').onclick = () => {
+        window.open('https://noterelay.io/dashboard');
+      };
+    }
     
     // Setup instructions banner
     const isActive = this.plugin.signalId && this.plugin.heartbeatInterval;
@@ -2326,16 +2349,21 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     // Remote Vault Password
     const remotePassSetting = new obsidian.Setting(container)
       .setName('Remote Vault Password')
-      .setDesc('Set a secure password for remote connections. (Distinct from your Local Password)')
+      .setDesc(isPro ? 'Set a secure password for remote connections via the global relay. (Distinct from your Local Password)' : '🔒 Upgrade to Base or Pro to enable remote access')
       .addText((t) => {
-        t.setPlaceholder('Enter a strong master password');
+        t.setPlaceholder(isPro ? 'Enter a strong master password' : 'Requires Base or Pro plan');
         t.inputEl.type = 'password';
-        t.onChange((v) => this.newMasterPass = v);
+        t.setDisabled(!isPro);
+        if (isPro) {
+          t.onChange((v) => this.newMasterPass = v);
+        }
       })
       .addButton((b) => b
-        .setButtonText('Set Master Password')
+        .setButtonText(isPro ? 'Set Master Password' : 'Set Master Password (Pro Required)')
         .setCta()
+        .setDisabled(!isPro)
         .onClick(async () => {
+          if (!isPro) return;
           if (this.newMasterPass) {
             this.plugin.settings.masterPasswordHash = await hashString(this.newMasterPass);
             await this.plugin.saveSettings();
@@ -2348,11 +2376,13 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
         }));
     
     // Add Clear button if master password is set
-    if (this.plugin.settings.masterPasswordHash) {
+    if (this.plugin.settings.masterPasswordHash && isPro) {
       remotePassSetting.addButton((b) => b
         .setButtonText('Clear')
         .setClass('mod-warning')
+        .setDisabled(!isPro)
         .onClick(async () => {
+          if (!isPro) return;
           const confirmed = confirm('Clear your remote password? This will disable remote vault access.');
           if (confirmed) {
             this.plugin.settings.masterPasswordHash = '';
@@ -2367,19 +2397,24 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     
     const masterPassStatus = container.createDiv({ cls: 'setting-item-description' });
     masterPassStatus.style.cssText = 'margin: -10px 0 20px 0; padding-left: 0;';
-    masterPassStatus.setText(this.plugin.settings.masterPasswordHash ? '✅ Remote password is set' : '⚠️ Required - Set a password for remote vault access');
+    if (!isPro) {
+      masterPassStatus.innerHTML = '🔒 <span style="color: var(--text-muted);">Upgrade to unlock remote vault access</span>';
+    } else {
+      masterPassStatus.setText(this.plugin.settings.masterPasswordHash ? '✅ Remote password is set' : '⚠️ Required - Set a password for remote vault access');
+    }
     
     // Activation Button
-    const canActivate = hasMasterPass && hasEmail;
+    const canActivate = hasMasterPass && hasEmail && isPro;
     const activationSetting = new obsidian.Setting(container)
       .setName('Activate Remote Access')
-      .setDesc(canActivate ? 'Click to validate your subscription and register this vault for remote access' : 'Set a remote password above to continue');
+      .setDesc(!isPro ? '🔒 Requires Base or Pro subscription to connect to global relay' : canActivate ? 'Click to validate your subscription and register this vault for remote access via the global relay' : 'Set a remote password above to continue');
     
     activationSetting.addButton((b) => {
-      b.setButtonText(isActive ? '🟢 Active - Click to Re-register' : 'Activate Remote Access')
+      b.setButtonText(!isPro ? 'Activate Remote Access (Pro Required)' : isActive ? '🟢 Active - Click to Re-register' : 'Activate Remote Access')
         .setCta()
         .setDisabled(!canActivate)
         .onClick(async () => {
+          if (!isPro) return;
           // Validate license before connecting
           new obsidian.Notice('Checking subscription...');
           
@@ -2458,14 +2493,14 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
     // GUEST MANAGER SECTION
     container.createEl('h3', { text: 'Guest Access Control', cls: 'setting-item-heading' });
     
-    // Check if user has Pro tier
-    const isPro = this.plugin.settings.licenseTier === 'pro';
+    // Check if user has Pro tier (Guest Manager requires Pro specifically, not Base)
+    const hasGuestAccess = this.plugin.settings.licenseTier === 'pro';
     
     const guestManagerDiv = container.createDiv();
     guestManagerDiv.style.cssText = 'padding: 20px; background: var(--background-secondary); border-radius: 6px; margin: 20px 0;';
     
     // Show upgrade CTA if not Pro
-    if (!isPro) {
+    if (!hasGuestAccess) {
       const upgradeCTA = guestManagerDiv.createDiv();
       upgradeCTA.style.cssText = 'padding: 20px; text-align: center; background: rgba(255, 215, 0, 0.1); border: 2px solid #ffd700; border-radius: 6px; color: var(--text-normal);';
       upgradeCTA.innerHTML = `
