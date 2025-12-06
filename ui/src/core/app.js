@@ -16,6 +16,7 @@ let conn = null;
 let masterFileList = [];
 let folderTree = {};
 let tagTree = {};
+let forceTreeRender = false; // ensure TREE messages trigger re-render after mutations
 let currentView = 'folders';
 let currentPath = null;
 let selectedFolderPath = '';
@@ -427,13 +428,13 @@ function handleMessage(msg) {
         tagTree = result.tagTree;
 
         // Always render on first load, silent refresh on subsequent loads
-        if (wasEmpty || !msg.data.files) {
-            console.log('🎨 Rendering sidebar and note list');
-            renderSidebar();
-            prepareNoteList(folderTree._files.length > 0 ? folderTree._files : masterFileList.slice(0, 100));
-        } else {
-            console.log('🔄 Silent refresh - not re-rendering');
-        }
+        // Always render to keep sidebar in sync (mutations may have occurred)
+        console.log('🎨 Rendering sidebar and note list');
+        renderSidebar();
+        prepareNoteList(folderTree._files.length > 0 ? folderTree._files : masterFileList.slice(0, 100));
+
+        // Reset mutation render request
+        forceTreeRender = false;
         return;
     }
 
@@ -2447,6 +2448,14 @@ async function saveYamlToFile() {
  */
 function renderSidebar() {
     const container = document.getElementById('file-tree');
+    // Capture currently open folder paths to restore after re-render
+    const previouslyOpen = new Set();
+    container.querySelectorAll('.tree-children.open').forEach(el => {
+        const label = el.previousElementSibling;
+        const path = label?.getAttribute('data-path');
+        if (path) previouslyOpen.add(path);
+    });
+
     container.innerHTML = '';
 
     const tree = currentView === 'folders' ? folderTree : tagTree;
@@ -2460,6 +2469,46 @@ function renderSidebar() {
     };
 
     renderNode(tree, container, 0, '', currentView, iconSet, onNodeClick);
+
+    // Determine target path (selection or current file's folder) to auto-open
+    let targetPath = null;
+    if (currentView === 'folders') {
+        if (selectedFolderPath) {
+            targetPath = selectedFolderPath;
+        } else if (currentPath && currentPath.includes('/')) {
+            targetPath = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+        }
+    }
+
+    const ancestorPaths = [];
+    if (targetPath) {
+        const parts = targetPath.split('/').filter(Boolean);
+        let acc = '';
+        parts.forEach(part => {
+            acc += part + '/';
+            ancestorPaths.push(acc);
+        });
+    }
+
+    const pathsToOpen = new Set([...previouslyOpen, ...ancestorPaths]);
+
+    pathsToOpen.forEach(path => {
+        const label = container.querySelector(`.tree-label[data-path="${CSS.escape(path)}"]`);
+        const children = label ? label.nextElementSibling : null;
+        const caret = label ? label.querySelector('.caret') : null;
+        if (children && caret) {
+            children.classList.add('open');
+            caret.innerHTML = '▼';
+        }
+    });
+
+    if (targetPath) {
+        const targetLabel = container.querySelector(`.tree-label[data-path="${CSS.escape(targetPath)}"]`);
+        if (targetLabel) {
+            document.querySelectorAll('.tree-label').forEach(d => d.classList.remove('selected'));
+            targetLabel.classList.add('selected');
+        }
+    }
 
     // Reapply theme to newly rendered elements
     setTimeout(() => applyThemeToElements(), 10);
@@ -3023,6 +3072,7 @@ async function createFolder() {
     if (name) {
         const fullPath = parentDir + name;
         await conn.send('CREATE_FOLDER', { path: fullPath });
+        forceTreeRender = true;
         await conn.send('GET_TREE');
     }
 }
@@ -3190,6 +3240,7 @@ async function ctxRename() {
         }
 
         await conn.send('RENAME_FILE', { path: cleanTarget, data: { newPath } });
+        forceTreeRender = true;
         await conn.send('GET_TREE');
         if (isFile && cleanTarget.endsWith('.md')) {
             await loadFile(newPath);
@@ -3212,6 +3263,7 @@ async function ctxDelete() {
 
     if (confirm(`Are you sure you want to delete this ${itemType}: "${displayName}"?`)) {
         await conn.send('DELETE_FILE', { path: cleanTarget });
+        forceTreeRender = true;
         await conn.send('GET_TREE');
     }
 }

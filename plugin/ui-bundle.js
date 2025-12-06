@@ -1,70 +1,11 @@
 (function() {
   "use strict";
-  let supabase = null;
-  let supabaseCredentials = null;
-  async function initSupabase() {
-    if (!supabase && supabaseCredentials) {
-      const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
-      supabase = createClient(supabaseCredentials.url, supabaseCredentials.anonKey);
-    }
-    return supabase;
-  }
-  async function checkTurnUsed(peer) {
-    if (!peer || !peer._pc) return false;
-    try {
-      const stats = await peer._pc.getStats();
-      for (const stat of stats.values()) {
-        if (stat.type === "candidate-pair" && stat.state === "succeeded") {
-          const localStat = stats.get(stat.localCandidateId);
-          const remoteStat = stats.get(stat.remoteCandidateId);
-          if ((localStat == null ? void 0 : localStat.candidateType) === "relay" || (remoteStat == null ? void 0 : remoteStat.candidateType) === "relay") {
-            return true;
-          }
-        }
-      }
-    } catch (e2) {
-      console.error("Error checking TURN usage:", e2);
-    }
-    return false;
-  }
-  async function logConnectionEvent(vaultId, eventType, errorMessage = null, turnUsed = false) {
-    var _a;
-    try {
-      const sb = await initSupabase();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      const response = await fetch("https://noterelay.io/api/vaults?route=log-connection", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${(_a = (await sb.auth.getSession()).data.session) == null ? void 0 : _a.access_token}`
-        },
-        body: JSON.stringify({
-          vaultId,
-          eventType,
-          errorMessage,
-          turnUsed
-        })
-      });
-      if (!response.ok) {
-        console.warn("Failed to log connection event:", await response.text());
-      }
-    } catch (e2) {
-      console.error("Error logging connection event:", e2);
-    }
-  }
-  class VaultConnection {
+  class LocalConnection {
     constructor() {
-      this.mode = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? "local" : "remote";
+      this.mode = "local";
       this.authHash = null;
-      this.peer = null;
       this.onMessage = null;
-      this.incomingChunks = { TREE: "", FILE: "" };
-      this.CLIENT_ID = null;
-      this.signalingChannel = null;
-      this.uniqueClientId = null;
-      this.password = null;
-      console.log(`🔌 Note Relay: Initializing in ${this.mode.toUpperCase()} mode`);
+      console.log("🔌 Note Relay: Local HTTP mode");
     }
     /**
      * Hash password using SHA-256
@@ -77,22 +18,12 @@
       return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
     }
     /**
-     * Connect using appropriate strategy (local HTTP or remote WebRTC)
+     * Connect to local plugin HTTP server
      */
     async connect(password, onStatusUpdate) {
       this.onStatusUpdate = onStatusUpdate || ((msg) => console.log(msg));
-      if (this.mode === "local") {
-        return this.connectLocal(password);
-      } else {
-        return this.connectRemote(password);
-      }
-    }
-    /**
-     * Local HTTP connection strategy
-     */
-    async connectLocal(password) {
       this.authHash = await this.hashString(password);
-      this.onStatusUpdate("Using Local HTTP Mode");
+      this.onStatusUpdate("Connecting to local vault...");
       const response = await fetch("http://localhost:5474/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -102,7 +33,7 @@
         throw new Error("Authentication Failed");
       }
       const pingResult = await response.json();
-      if (pingResult.data.css) {
+      if (pingResult.data && pingResult.data.css) {
         let styleTag = document.getElementById("obsidian-theme-vars");
         if (!styleTag) {
           styleTag = document.createElement("style");
@@ -112,7 +43,7 @@
         styleTag.textContent = pingResult.data.css;
       }
       console.log("📡 PING response received");
-      this.onStatusUpdate("Authenticated. Fetching Data...");
+      this.onStatusUpdate("Authenticated. Loading vault...");
       if (this.onMessage) {
         this.onMessage({ type: "CONNECTED", data: {} });
       }
@@ -122,207 +53,9 @@
       return true;
     }
     /**
-     * Remote WebRTC connection strategy
-     */
-    async connectRemote(password) {
-      const selectedVault = sessionStorage.getItem("selectedVault");
-      if (!selectedVault) {
-        throw new Error("No vault selected");
-      }
-      let vaultData;
-      try {
-        vaultData = JSON.parse(selectedVault);
-        this.CLIENT_ID = vaultData.signalId;
-        console.log("🔑 Vault Signal ID (CLIENT_ID):", this.CLIENT_ID);
-      } catch (error) {
-        throw new Error("Invalid vault configuration");
-      }
-      this.password = password;
-      this.onStatusUpdate("Initializing connection...");
-      try {
-        const initResponse = await fetch("https://noterelay.io/api/plugin-init", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            email: vaultData.userEmail || window.userEmail,
-            // From plugin settings
-            vaultId: vaultData.id
-          })
-        });
-        if (!initResponse.ok) {
-          const error = await initResponse.json();
-          throw new Error(error.error || "Failed to initialize connection");
-        }
-        const initData = await initResponse.json();
-        supabaseCredentials = initData.supabase;
-        this.iceServers = initData.iceServers;
-        console.log("✅ Connection credentials obtained");
-      } catch (err) {
-        this.onStatusUpdate("Unable to reach connection service. Check internet connection.");
-        throw err;
-      }
-      this.onStatusUpdate("Establishing secure end-to-end encryption...");
-      try {
-        await this.attemptConnection(false);
-      } catch (err) {
-        console.log("Direct P2P connection timeout:", err.message);
-      }
-      if (!this.peer || !this.peer.connected) {
-        this.onStatusUpdate("Strict firewall detected. Switching to secure relay mode...");
-        await new Promise((r2) => setTimeout(r2, 1500));
-        this.onStatusUpdate("Routing through secure private tunnel...");
-        try {
-          await this.attemptConnection(true);
-        } catch (finalErr) {
-          this.onStatusUpdate("Connection failed. Is the vault online?");
-          throw finalErr;
-        }
-      }
-      return true;
-    }
-    /**
-     * Attempt WebRTC connection with given ICE configuration
-     */
-    async attemptConnection(useTurn) {
-      return new Promise(async (resolve, reject) => {
-        if (this.peer) {
-          this.peer.destroy();
-          this.peer = null;
-        }
-        let iceServers = this.iceServers || [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" }
-        ];
-        if (!useTurn) {
-          iceServers = iceServers.filter(
-            (server) => server.urls.includes("stun:")
-          );
-        }
-        await this.initPeer(this.password, iceServers, useTurn, resolve, reject);
-      });
-    }
-    /**
-     * Initialize SimplePeer WebRTC connection
-     */
-    async initPeer(password, iceServers, useTurn, resolve, reject) {
-      if (typeof window.SimplePeer === "undefined") {
-        await new Promise((res, rej) => {
-          const script = document.createElement("script");
-          script.src = "https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js";
-          script.onload = res;
-          script.onerror = rej;
-          document.head.appendChild(script);
-        });
-      }
-      if (typeof window.SimplePeer === "undefined") {
-        reject(new Error("Failed to load peer library"));
-        return;
-      }
-      if (this.signalingChannel) {
-        await this.signalingChannel.unsubscribe();
-        this.signalingChannel = null;
-      }
-      const sb = await initSupabase();
-      this.uniqueClientId = "web-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
-      this.signalingChannel = sb.channel(`portal-signaling-${Date.now()}`).on("postgres_changes", {
-        event: "INSERT",
-        schema: "public",
-        table: "signaling",
-        filter: `target=eq.${this.uniqueClientId}`
-      }, (payload) => {
-        console.log("📥 Received signaling message:", payload.new.type);
-        if (payload.new.type === "answer" && this.peer) {
-          this.peer.signal(payload.new.payload);
-        }
-      }).subscribe();
-      this.peer = new window.SimplePeer({
-        initiator: true,
-        trickle: false,
-        config: { iceServers }
-      });
-      const timeoutDuration = useTurn ? 15e3 : 5e3;
-      const connectionTimeout = setTimeout(async () => {
-        if (this.peer && !this.peer.connected) {
-          this.peer.destroy();
-          reject(new Error("Connection timeout"));
-        }
-      }, timeoutDuration);
-      this.peer.on("signal", async (data) => {
-        console.log("📤 Sending offer to signal ID:", this.CLIENT_ID);
-        const authHash = await this.hashString(password);
-        await sb.from("signaling").insert({
-          signal_id: this.CLIENT_ID,
-          type: "offer",
-          payload: data,
-          target: this.CLIENT_ID,
-          client_id: this.uniqueClientId,
-          auth_hash: authHash
-        });
-      });
-      this.peer.on("connect", async () => {
-        clearTimeout(connectionTimeout);
-        console.log("✅ WebRTC connection established");
-        await logConnectionEvent(
-          this.CLIENT_ID,
-          "connected",
-          null,
-          await checkTurnUsed(this.peer)
-        );
-        resolve(true);
-      });
-      this.peer.on("data", (rawData) => {
-        const text = new TextDecoder().decode(rawData);
-        if (text.startsWith("CHUNK_TREE:")) {
-          this.incomingChunks.TREE += text.replace("CHUNK_TREE:", "");
-          return;
-        }
-        if (text === "END_TREE") {
-          const finalData = JSON.parse(this.incomingChunks.TREE);
-          this.incomingChunks.TREE = "";
-          if (this.onMessage) this.onMessage(finalData);
-          return;
-        }
-        if (text.startsWith("CHUNK_FILE:")) {
-          this.incomingChunks.FILE += text.replace("CHUNK_FILE:", "");
-          return;
-        }
-        if (text === "END_FILE") {
-          const finalData = JSON.parse(this.incomingChunks.FILE);
-          this.incomingChunks.FILE = "";
-          if (this.onMessage) this.onMessage(finalData);
-          return;
-        }
-        try {
-          const data = JSON.parse(text);
-          if (this.onMessage) this.onMessage(data);
-        } catch (err) {
-          console.error("Failed to parse message:", err);
-        }
-      });
-      this.peer.on("error", (err) => {
-        console.error("Peer error:", err);
-        reject(err);
-      });
-      this.peer.on("close", () => {
-        console.log("WebRTC connection closed");
-      });
-    }
-    /**
-     * Send command to vault (HTTP or WebRTC)
-     */
-    async send(cmd, extraData = {}) {
-      if (this.mode === "local") {
-        return this.sendHTTP(cmd, extraData);
-      } else {
-        return this.sendWebRTC(cmd, extraData);
-      }
-    }
-    /**
      * Send command via HTTP
      */
-    async sendHTTP(cmd, extraData = {}) {
+    async send(cmd, extraData = {}) {
       const response = await fetch("http://localhost:5474/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -338,30 +71,10 @@
       return result;
     }
     /**
-     * Send command via WebRTC
+     * Disconnect (no-op for HTTP)
      */
-    sendWebRTC(cmd, extraData = {}) {
-      return new Promise((resolve, reject) => {
-        if (!this.peer || !this.peer.connected) {
-          reject(new Error("Not connected"));
-          return;
-        }
-        const message = JSON.stringify({ cmd, ...extraData });
-        this.peer.send(message);
-        const handler = (data) => {
-          if (data.cmd === cmd || data.type === cmd) {
-            this.onMessage = null;
-            resolve(data);
-          }
-        };
-        this.onMessage = handler;
-        setTimeout(() => {
-          if (this.onMessage === handler) {
-            this.onMessage = null;
-            reject(new Error("Request timeout"));
-          }
-        }, 1e4);
-      });
+    disconnect() {
+      console.log("Local connection closed");
     }
   }
   function processFileData(data) {
@@ -31223,7 +30936,7 @@
   function initApp() {
     console.log("🚀 Note Relay V2 Bundle Loaded - Build: Production");
     console.log("✅ Initializing Note Relay UI");
-    conn = new VaultConnection();
+    conn = new LocalConnection();
     const savedPanels = localStorage.getItem("panelState");
     if (savedPanels) {
       panelState = JSON.parse(savedPanels);
@@ -31460,17 +31173,13 @@
         folderTreeFiles: (_f = result.folderTree._files) == null ? void 0 : _f.length,
         tagTreeCount: Object.keys(result.tagTree).length
       });
-      const wasEmpty = masterFileList.length === 0;
+      masterFileList.length === 0;
       masterFileList = result.masterFileList;
       folderTree = result.folderTree;
       tagTree = result.tagTree;
-      if (wasEmpty || !msg.data.files) {
-        console.log("🎨 Rendering sidebar and note list");
-        renderSidebar();
-        prepareNoteList(folderTree._files.length > 0 ? folderTree._files : masterFileList.slice(0, 100));
-      } else {
-        console.log("🔄 Silent refresh - not re-rendering");
-      }
+      console.log("🎨 Rendering sidebar and note list");
+      renderSidebar();
+      prepareNoteList(folderTree._files.length > 0 ? folderTree._files : masterFileList.slice(0, 100));
       return;
     }
     if (msg.type === "FILE") {
@@ -32983,6 +32692,12 @@ ${bodyContent}`;
   }
   function renderSidebar() {
     const container = document.getElementById("file-tree");
+    const previouslyOpen = /* @__PURE__ */ new Set();
+    container.querySelectorAll(".tree-children.open").forEach((el) => {
+      const label = el.previousElementSibling;
+      const path = label == null ? void 0 : label.getAttribute("data-path");
+      if (path) previouslyOpen.add(path);
+    });
     container.innerHTML = "";
     const tree = currentView === "folders" ? folderTree : tagTree;
     const iconSet = { folder, tag };
@@ -32993,6 +32708,40 @@ ${bodyContent}`;
       prepareNoteList(files);
     };
     renderNode(tree, container, 0, "", currentView, iconSet, onNodeClick);
+    let targetPath = null;
+    if (currentView === "folders") {
+      if (selectedFolderPath) {
+        targetPath = selectedFolderPath;
+      } else if (currentPath && currentPath.includes("/")) {
+        targetPath = currentPath.substring(0, currentPath.lastIndexOf("/") + 1);
+      }
+    }
+    const ancestorPaths = [];
+    if (targetPath) {
+      const parts = targetPath.split("/").filter(Boolean);
+      let acc = "";
+      parts.forEach((part) => {
+        acc += part + "/";
+        ancestorPaths.push(acc);
+      });
+    }
+    const pathsToOpen = /* @__PURE__ */ new Set([...previouslyOpen, ...ancestorPaths]);
+    pathsToOpen.forEach((path) => {
+      const label = container.querySelector(`.tree-label[data-path="${CSS.escape(path)}"]`);
+      const children2 = label ? label.nextElementSibling : null;
+      const caret = label ? label.querySelector(".caret") : null;
+      if (children2 && caret) {
+        children2.classList.add("open");
+        caret.innerHTML = "▼";
+      }
+    });
+    if (targetPath) {
+      const targetLabel = container.querySelector(`.tree-label[data-path="${CSS.escape(targetPath)}"]`);
+      if (targetLabel) {
+        document.querySelectorAll(".tree-label").forEach((d2) => d2.classList.remove("selected"));
+        targetLabel.classList.add("selected");
+      }
+    }
     setTimeout(() => applyThemeToElements(), 10);
   }
   function prepareNoteList(files) {
