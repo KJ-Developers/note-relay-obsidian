@@ -33,6 +33,11 @@ let ctxTargetType = null;
 let currentYamlData = null;
 let contentWithoutYaml = '';
 let navigationHistory = [];
+let kanbanState = null; // parsed markdown structure for kanban boards
+let kanbanDragState = { saving: false, fromLane: null, fromIndex: null, itemEl: null, sourceLaneEl: null };
+let kanbanCheckboxSaving = false; // prevent concurrent checkbox saves in Kanban view
+let preferPluginPreview = false; // prefer plugin-rendered view (e.g., Kanban) over markdown fallback
+let pluginViewActive = false; // track if plugin view is currently displayed
 
 /**
  * Show welcome screen on initial load
@@ -194,6 +199,12 @@ function setupEventListeners() {
  * Handle document clicks (links, tags, checkboxes)
  */
 async function handleDocumentClick(e) {
+    // Don't interfere with text selection - check if user is selecting text
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+        return; // User is selecting text, don't interfere
+    }
+
     // Checkbox handling (including dataview checkboxes)
     if (e.target.type === 'checkbox' && e.target.closest('#custom-preview')) {
         e.preventDefault();
@@ -346,6 +357,403 @@ async function handleCheckboxClick(checkbox) {
 }
 
 /**
+ * Parse Kanban markdown into structured lanes/items
+ */
+function parseKanbanMarkdown(content) {
+    const lines = content.split('\n');
+    const settingsIndex = lines.findIndex(l => l.trim().startsWith('%% kanban:settings'));
+    const settingsText = settingsIndex !== -1 ? lines.slice(settingsIndex).join('\n') : '';
+    const workLines = settingsIndex !== -1 ? lines.slice(0, settingsIndex) : [...lines];
+
+    let idx = 0;
+    const preambleLines = [];
+    while (idx < workLines.length && !workLines[idx].startsWith('## ')) {
+        preambleLines.push(workLines[idx]);
+        idx++;
+    }
+
+    const lanes = [];
+    const itemRegex = /^\s*[-*+]\s+\[( |x|X)\]\s+/;
+
+    while (idx < workLines.length) {
+        const line = workLines[idx];
+        if (!line.startsWith('## ')) {
+            idx++;
+            continue;
+        }
+
+        const title = line.replace(/^##\s+/, '').trim();
+        idx++;
+        const items = [];
+
+        while (idx < workLines.length && !workLines[idx].startsWith('## ')) {
+            // Skip blank spacing between items
+            if (workLines[idx].trim() === '') {
+                idx++;
+                continue;
+            }
+
+            if (itemRegex.test(workLines[idx])) {
+                const itemLines = [workLines[idx]];
+                idx++;
+
+                // Capture any indented lines belonging to this item
+                while (
+                    idx < workLines.length &&
+                    !workLines[idx].startsWith('## ') &&
+                    !itemRegex.test(workLines[idx])
+                ) {
+                    // Stop if we hit settings block header
+                    if (workLines[idx].trim().startsWith('%% kanban:settings')) break;
+
+                    // Allow a single blank line inside a card; break if next is a new card
+                    if (workLines[idx].trim() === '' && itemRegex.test(workLines[idx + 1] || '')) break;
+
+                    itemLines.push(workLines[idx]);
+                    idx++;
+                }
+
+                items.push({ lines: itemLines });
+                continue;
+            }
+
+            idx++;
+        }
+
+        lanes.push({ title, items });
+    }
+
+    return { preambleLines, lanes, settingsText };
+}
+
+/**
+ * Serialize Kanban state back to markdown
+ */
+function serializeKanbanMarkdown(state) {
+    const parts = [];
+
+    if (state.preambleLines && state.preambleLines.length) {
+        // Preserve leading content/frontmatter as-is
+        parts.push(state.preambleLines.join('\n').replace(/\s+$/, ''));
+    }
+
+    state.lanes.forEach((lane, laneIdx) => {
+        // Ensure a blank line before each lane section (except if preamble already ends with one)
+        if (parts.length && !parts[parts.length - 1].endsWith('\n\n')) parts.push('');
+
+        parts.push(`## ${lane.title}`);
+
+        if (!lane.items.length) {
+            parts.push('');
+        } else {
+            lane.items.forEach(item => {
+                parts.push(item.lines.join('\n'));
+            });
+        }
+
+        if (laneIdx !== state.lanes.length - 1) parts.push('');
+    });
+
+    let body = parts.join('\n');
+    body = body.replace(/\n{3,}/g, '\n\n').trimEnd();
+
+    if (state.settingsText) {
+        body += '\n\n' + state.settingsText.trimStart();
+    }
+
+    return body + '\n';
+}
+
+function cloneKanbanState(state) {
+    if (!state) return null;
+    return {
+        preambleLines: [...(state.preambleLines || [])],
+        settingsText: state.settingsText,
+        lanes: (state.lanes || []).map(lane => ({
+            title: lane.title,
+            items: (lane.items || []).map(item => ({ lines: [...item.lines] }))
+        }))
+    };
+}
+
+function getDropIndex(container, clientY) {
+    const items = Array.from(container.querySelectorAll('.kanban-plugin__item')).filter(el => !el.classList.contains('dragging'));
+    if (!items.length) return 0;
+
+    let idx = items.length;
+    for (let i = 0; i < items.length; i++) {
+        const rect = items[i].getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        if (clientY < midpoint) {
+            idx = i;
+            break;
+        }
+    }
+    return idx;
+}
+
+function bindItemDragEvents(itemEl) {
+    if (itemEl.dataset.dndBound === 'true') return;
+
+    itemEl.dataset.dndBound = 'true';
+    itemEl.setAttribute('draggable', 'true');
+
+    // Allow text selection by detecting mousedown on text content
+    itemEl.addEventListener('mousedown', (e) => {
+        // If clicking on text/content (not card background), allow text selection
+        const clickedOnText = e.target.closest('.kanban-plugin__item-title, .kanban-plugin__item-content, p, span, a, li');
+        
+        console.log('🖱️ Kanban mousedown:', { clickedOnText: !!clickedOnText, target: e.target.tagName });
+        
+        if (clickedOnText) {
+            // Temporarily disable dragging to allow text selection
+            itemEl.setAttribute('draggable', 'false');
+            console.log('✂️ Disabled dragging for text selection');
+            
+            // Re-enable dragging after a short delay (user is selecting, not dragging)
+            setTimeout(() => {
+                itemEl.setAttribute('draggable', 'true');
+                console.log('🔄 Re-enabled dragging');
+            }, 200);
+        }
+    });
+
+    itemEl.addEventListener('dragstart', (e) => {
+        // If draggable is false, prevent drag
+        if (itemEl.getAttribute('draggable') === 'false') {
+            e.preventDefault();
+            return;
+        }
+
+        const laneIndex = Number(itemEl.dataset.laneIndex || 0);
+        const itemIndex = Number(itemEl.dataset.itemIndex || 0);
+
+        kanbanDragState.fromLane = laneIndex;
+        kanbanDragState.fromIndex = itemIndex;
+        kanbanDragState.itemEl = itemEl;
+        kanbanDragState.sourceLaneEl = itemEl.closest('.kanban-plugin__lane');
+
+        itemEl.classList.add('dragging');
+        if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', 'kanban-item');
+        }
+    });
+
+    itemEl.addEventListener('dragend', () => {
+        itemEl.classList.remove('dragging');
+        kanbanDragState.itemEl = null;
+    });
+}
+
+function reindexLaneItems(laneEl, laneIdx) {
+    const container = laneEl.querySelector('.kanban-plugin__lane-items') || laneEl;
+    Array.from(container.querySelectorAll('.kanban-plugin__item')).forEach((el, idx) => {
+        el.dataset.laneIndex = String(laneIdx);
+        el.dataset.itemIndex = String(idx);
+    });
+}
+
+async function handleKanbanDrop(e) {
+    e.preventDefault();
+
+    const laneEl = e.currentTarget.closest('.kanban-plugin__lane');
+    if (!laneEl || kanbanDragState.fromLane === null) return;
+
+    const laneIndex = Number(laneEl.dataset.laneIndex || '0');
+    const itemsContainer = laneEl.querySelector('.kanban-plugin__lane-items') || laneEl;
+    const dropIndex = getDropIndex(itemsContainer, e.clientY);
+
+    // Optimistic DOM move for immediate feedback
+    const dragging = document.querySelector('.kanban-plugin__item.dragging');
+    if (dragging) {
+        const siblings = Array.from(itemsContainer.querySelectorAll('.kanban-plugin__item'));
+        const targetNode = siblings[dropIndex];
+        if (targetNode && targetNode.parentNode === itemsContainer) {
+            itemsContainer.insertBefore(dragging, targetNode);
+        } else {
+            itemsContainer.appendChild(dragging);
+        }
+        reindexLaneItems(laneEl, laneIndex);
+        if (kanbanDragState.sourceLaneEl && kanbanDragState.sourceLaneEl.isConnected) {
+            const srcIdx = Number(kanbanDragState.sourceLaneEl.dataset.laneIndex || kanbanDragState.fromLane || 0);
+            reindexLaneItems(kanbanDragState.sourceLaneEl, srcIdx);
+        }
+    }
+
+    await persistKanbanMove(laneIndex, dropIndex);
+}
+
+async function persistKanbanMove(targetLaneIndex, rawDropIndex) {
+    if (!kanbanState || kanbanDragState.saving) return;
+    if (kanbanDragState.fromLane === null || kanbanDragState.fromIndex === null) return;
+
+    const sourceLaneIndex = kanbanDragState.fromLane;
+    const sourceItemIndex = kanbanDragState.fromIndex;
+    const nextState = cloneKanbanState(kanbanState);
+    const sourceLane = nextState?.lanes?.[sourceLaneIndex];
+    const targetLane = nextState?.lanes?.[targetLaneIndex];
+    if (!sourceLane || !targetLane) return;
+
+    const [movedItem] = sourceLane.items.splice(sourceItemIndex, 1);
+    if (!movedItem) return;
+
+    let dropIndex = rawDropIndex;
+    if (targetLaneIndex === sourceLaneIndex && dropIndex > sourceItemIndex) dropIndex = dropIndex - 1;
+    dropIndex = Math.min(Math.max(dropIndex, 0), targetLane.items.length);
+
+    targetLane.items.splice(dropIndex, 0, movedItem);
+
+    const newContent = serializeKanbanMarkdown(nextState);
+
+    try {
+        kanbanDragState.saving = true;
+        await conn.send('SAVE_FILE', { path: currentPath, data: newContent });
+        kanbanState = nextState;
+
+        // Stay in plugin (kanban) view after save
+        const resp = await conn.send('OPEN_FILE', { path: currentPath });
+        const data = resp?.data || resp;
+        if (data?.renderedHTML && data.viewType === 'kanban') {
+            renderPluginData(data);
+        } else {
+            // Fallback to rendered markdown if plugin capture missing
+            await conn.send('GET_RENDERED_FILE', { path: currentPath });
+        }
+    } catch (err) {
+        console.error('❌ Failed to persist Kanban move:', err);
+    } finally {
+        kanbanDragState.saving = false;
+        kanbanDragState.fromLane = null;
+        kanbanDragState.fromIndex = null;
+        kanbanDragState.itemEl = null;
+        kanbanDragState.sourceLaneEl = null;
+    }
+}
+
+async function handleKanbanCheckboxToggle(laneIdx, itemIdx, checkboxIdx, newCheckedState, checkboxEl) {
+    if (kanbanCheckboxSaving) {
+        console.log('⏳ Kanban checkbox save in progress, skipping');
+        return;
+    }
+
+    // Optimistic UI
+    if (checkboxEl) {
+        checkboxEl.checked = newCheckedState;
+        checkboxEl.dataset.task = newCheckedState ? 'x' : ' ';
+        const item = checkboxEl.closest('.kanban-plugin__item');
+        if (item) item.classList.toggle('is-checked', newCheckedState);
+    }
+
+    // Ensure we have current state
+    if (!kanbanState) {
+        const fileResult = await conn.send('GET_FILE', { path: currentPath });
+        const content = fileResult?.data?.data || fileResult?.data?.content || fileResult?.data || '';
+        if (typeof content !== 'string') return;
+        kanbanState = parseKanbanMarkdown(content);
+    }
+
+    const nextState = cloneKanbanState(kanbanState);
+    const lane = nextState?.lanes?.[laneIdx];
+    const item = lane?.items?.[itemIdx];
+    if (!item) return;
+
+    // Toggle the first checkbox line (or nth if multiple) in the item's lines
+    const taskRegex = /^(\s*[-*+]\s+\[)([ xX])(\])/;
+    let seen = 0;
+    let updated = false;
+    item.lines = item.lines.map(line => {
+        const match = line.match(taskRegex);
+        if (match) {
+            if (seen === checkboxIdx) {
+                const newStatus = newCheckedState ? 'x' : ' ';
+                updated = true;
+                return `${match[1]}${newStatus}${match[3]}${line.slice(match[0].length)}`;
+            }
+            seen++;
+        }
+        return line;
+    });
+
+    if (!updated) return;
+
+    const newContent = serializeKanbanMarkdown(nextState);
+
+    try {
+        kanbanCheckboxSaving = true;
+        await conn.send('SAVE_FILE', { path: currentPath, data: newContent });
+        kanbanState = nextState;
+        preferPluginPreview = true;
+
+        const resp = await conn.send('OPEN_FILE', { path: currentPath });
+        const data = resp?.data || resp;
+        if (data?.renderedHTML && data.viewType === 'kanban') {
+            renderPluginData(data);
+        } else {
+            await conn.send('GET_RENDERED_FILE', { path: currentPath });
+        }
+    } catch (err) {
+        console.error('❌ Failed to save Kanban checkbox:', err);
+        if (checkboxEl) checkboxEl.checked = !newCheckedState;
+    } finally {
+        kanbanCheckboxSaving = false;
+    }
+}
+
+async function setupKanbanDragAndDrop() {
+    const preview = document.getElementById('custom-preview');
+    if (!preview) return;
+
+    const board = preview.querySelector('.kanban-plugin');
+    if (!board || !currentPath) return;
+
+    const fileResult = await conn.send('GET_FILE', { path: currentPath });
+    const content = fileResult?.data?.data || fileResult?.data?.content || fileResult?.data || '';
+
+    if (typeof content !== 'string') {
+        console.warn('⚠️ Kanban drag/drop skipped: content not string');
+        return;
+    }
+
+    const parsed = parseKanbanMarkdown(content);
+    if (!parsed.lanes.length) {
+        console.warn('⚠️ Kanban drag/drop skipped: no lanes found');
+        return;
+    }
+
+    kanbanState = parsed;
+
+    const laneElements = Array.from(board.querySelectorAll('.kanban-plugin__lane'));
+    laneElements.forEach((laneEl, laneIdx) => {
+        laneEl.dataset.laneIndex = String(laneIdx);
+        const itemsContainer = laneEl.querySelector('.kanban-plugin__lane-items') || laneEl;
+
+        laneEl.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+        laneEl.addEventListener('drop', handleKanbanDrop);
+
+        const itemElements = Array.from(itemsContainer.querySelectorAll('.kanban-plugin__item'));
+        itemElements.forEach((itemEl, itemIdx) => {
+            itemEl.dataset.laneIndex = String(laneIdx);
+            itemEl.dataset.itemIndex = String(itemIdx);
+            bindItemDragEvents(itemEl);
+
+            // Hide and disable checkboxes in Kanban view (read-only for tasks)
+            const checkboxes = Array.from(itemEl.querySelectorAll('input[type="checkbox"]'));
+            checkboxes.forEach((cb) => {
+                if (cb.dataset.kbBound === 'true') return;
+                cb.dataset.kbBound = 'true';
+                cb.disabled = true;
+                cb.style.display = 'none';
+                cb.style.pointerEvents = 'none';
+                cb.style.opacity = '0';
+            });
+        });
+    });
+}
+
+/**
  * Connect to vault (local or remote)
  */
 async function connectToVault() {
@@ -443,6 +851,8 @@ function handleMessage(msg) {
         const content = msg.data.data || msg.data;
         console.log('📄 Loading file:', filePath, 'Current mode:', isReadingMode ? 'READ' : 'EDIT');
 
+        // Do not clear plugin preference here; Kanban saves can emit FILE before plugin re-render
+
         // Load into editor
         easyMDE.value(content);
         easyMDE.codemirror.clearHistory();
@@ -453,17 +863,9 @@ function handleMessage(msg) {
             return;
         }
 
-        // Only manipulate loading/preview if in reading mode
-        // (when toggling to edit mode, toggleViewMode already handled the UI)
+        // In read mode, avoid double-toggle loops; just refresh editor state
         if (isReadingMode) {
-            const loading = document.getElementById('preview-loading');
-            const preview = document.getElementById('custom-preview');
-            if (loading) loading.style.display = 'flex';
-            if (preview) preview.style.display = 'none';
-
-            // Double-toggle to get rendered version
-            toggleViewMode(); // Toggle off (to edit)
-            setTimeout(() => toggleViewMode(), 50); // Toggle on (to preview - triggers fetch)
+            if (easyMDE) easyMDE.codemirror.refresh();
         } else {
             // In edit mode - just refresh the editor
             if (easyMDE) easyMDE.codemirror.refresh();
@@ -480,6 +882,8 @@ function handleMessage(msg) {
         if (isCheckboxUpdate) {
             console.log('📍 RENDERED_FILE from checkbox update, will preserve scroll');
         }
+
+        const renderedPath = msg.meta?.path || msg.path;
 
         if (msg.data.files) {
             const result = processFileData({ files: msg.data.files }, true);
@@ -506,15 +910,23 @@ function handleMessage(msg) {
             }
         }
 
-        renderYamlProperties(msg.data.yaml, msg.meta?.path || msg.path);
+        renderYamlProperties(msg.data.yaml, renderedPath);
 
         // Check if we should preserve scroll position (set by checkbox handler)
         const preserveScroll = window._isCheckboxUpdate === true;
         console.log(`🔍 RENDERED_FILE: preserveScroll=${preserveScroll}, savedPos=${window._savedScrollPosition}`);
 
-        renderPreview(msg.data.html, preserveScroll);
         renderBacklinks(msg.data.backlinks || []);
-        const renderedPath = msg.meta?.path || msg.path;
+
+        // If plugin preview is preferred for this path, skip markdown render to avoid overwriting the plugin view
+        if (preferPluginPreview && renderedPath === currentPath) {
+            console.log('⏭️ Skipping markdown render because plugin preview is preferred');
+            if (panelState.graph && renderedPath) renderLocalGraph(renderedPath);
+            return;
+        }
+
+        renderPreview(msg.data.html, preserveScroll);
+        pluginViewActive = false;
         if (panelState.graph && renderedPath) renderLocalGraph(renderedPath);
         return;
     }
@@ -753,6 +1165,11 @@ function applyThemeToElements() {
             el.style.setProperty('background-color', secondaryAltBg, 'important');
         });
     }
+
+    // Force preview content to remain text-selectable even if theme CSS disables selection
+    document.querySelectorAll('#custom-preview, #custom-preview *').forEach(el => {
+        el.style.setProperty('user-select', 'text', 'important');
+    });
 
     // === BLOCKQUOTES ===
 
@@ -1421,11 +1838,15 @@ function renderPluginData(data) {
             pluginName = 'Kanban Plugin by mgmeyers';
         }
 
+        // Remember that we prefer the plugin-rendered preview for this file
+        preferPluginPreview = true;
+        pluginViewActive = true;
+
         preview.innerHTML = `
             <div style="padding: 0px;">
                 <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
                     <strong>${pluginName}</strong>
-                    <span style="float: right; color: var(--text-muted);">Read-only view</span>
+                    <span style="float: right; color: var(--text-muted);">Read Only, Drag and Drop Enabled</span>
                 </div>
                 ${data.renderedHTML}
             </div>
@@ -1455,6 +1876,18 @@ function renderPluginData(data) {
     padding: 8px !important;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
     margin-bottom: 4px !important;
+}
+
+.kanban-plugin input[type="checkbox"] {
+    display: none !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+}
+
+.kanban-plugin__item.is-checked .kanban-plugin__item-title,
+.kanban-plugin__item.is-checked .kanban-plugin__item-title p {
+    text-decoration: line-through !important;
+    opacity: 0.6 !important;
 }
 
 .kanban-plugin__item:hover {
@@ -1496,10 +1929,32 @@ function renderPluginData(data) {
     display: none !important;
 }
 
-/* Disable drag and drop interactions */
-.kanban-plugin__item,
-.kanban-plugin__lane {
-    cursor: default !important;
+/* Ensure text selection works in regular preview */
+#custom-preview {
+    user-select: text !important;
+    cursor: text !important;
+}
+
+/* Allow text selection in ALL preview content including Kanban */
+#custom-preview * {
+    user-select: text !important;
+}
+
+/* Kanban cards show grab cursor on hover but allow text selection */
+.kanban-plugin__item {
+    cursor: grab !important;
+}
+
+.kanban-plugin__item:active {
+    cursor: grabbing !important;
+}
+
+/* Text inside Kanban items uses text cursor */
+.kanban-plugin__item-title,
+.kanban-plugin__item-title *,
+.kanban-plugin__item-content,
+.kanban-plugin__item-content * {
+    cursor: text !important;
 }
 `;
 
@@ -1508,6 +1963,17 @@ function renderPluginData(data) {
 
         // Apply theme to the new content
         setTimeout(() => applyThemeToElements(), 100);
+
+        // Enable drag-and-drop interactions for Kanban boards
+        if (data.viewType === 'kanban') {
+            setTimeout(() => {
+                setupKanbanDragAndDrop().catch(err => console.error('❌ Kanban drag setup failed:', err));
+            }, 50);
+        } else {
+            kanbanState = null;
+            preferPluginPreview = false;
+            pluginViewActive = false;
+        }
     }
 }
 
@@ -1518,6 +1984,14 @@ window.togglePluginView = async function () {
     console.log('🎯 togglePluginView called!', { currentPath, hasConn: !!conn });
     if (!currentPath || !conn) {
         console.error('❌ togglePluginView failed: missing currentPath or conn', { currentPath, conn });
+        return;
+    }
+
+    // If plugin view is active and user clicks again, force markdown render
+    if (pluginViewActive) {
+        preferPluginPreview = false;
+        pluginViewActive = false;
+        await conn.send('GET_RENDERED_FILE', { path: currentPath });
         return;
     }
 
@@ -2584,6 +3058,13 @@ async function loadFile(path) {
         }
     }
 
+    // Reset plugin/kanban state when switching notes to avoid stale flags
+    preferPluginPreview = false;
+    pluginViewActive = false;
+    kanbanState = null;
+    kanbanDragState = { saving: false, fromLane: null, fromIndex: null, itemEl: null, sourceLaneEl: null };
+    kanbanCheckboxSaving = false;
+
     currentPath = path;
     const filenameEl = document.getElementById('filename');
     const filename = path.split('/').pop().replace('.md', '');
@@ -2946,6 +3427,10 @@ async function toggleViewMode() {
             saveBtn.classList.remove('hidden');
             saveBtn.style.display = 'block';
         }
+
+        // Editing mode: allow markdown preview on next render
+        preferPluginPreview = false;
+        pluginViewActive = false;
 
         preview.style.display = 'none';
         loading.style.display = 'none';
@@ -3310,13 +3795,26 @@ function handleContextMenuDisplay(e) {
         return;
     }
 
+    // Don't intercept right-clicks in preview/editor areas - allow native text selection
+    if (e.target.closest('#custom-preview') || 
+        e.target.closest('.EasyMDEContainer') || 
+        e.target.closest('#main-content')) {
+        return;
+    }
+
+    // Only intercept for file tree items or empty sidebar space
+    const target = e.target.closest('.file-tree-item');
+    const inSidebar = e.target.closest('#sidebar');
+    
+    if (!target && !inSidebar) {
+        return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 
     const menu = document.getElementById('context-menu');
     if (!menu) return;
-
-    const target = e.target.closest('.file-tree-item');
 
     menu.innerHTML = '';
     menu.style.display = 'block';
@@ -3356,7 +3854,7 @@ function handleContextMenuDisplay(e) {
             { label: 'Rename', icon: 'fa-pen-to-square', action: 'ctxRename' },
             { label: 'Delete', icon: 'fa-trash', action: 'ctxDelete', danger: true }
         ]);
-    } else {
+    } else if (inSidebar) {
         ctxTarget = selectedFolderPath || '';
 
         renderContextMenu(menu, [

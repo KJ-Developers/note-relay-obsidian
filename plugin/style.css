@@ -376,8 +376,15 @@ body {
     font-family: var(--font-text);
     line-height: var(--line-height-normal);
     display: none;
+    user-select: text !important;
 }
 
+/* Ensure all preview content remains text-selectable even if themes disable it */
+#custom-preview *,
+#custom-preview *::before,
+#custom-preview *::after {
+    user-select: text !important;
+}
 .meta-section {
     position: fixed;
     bottom: 0;

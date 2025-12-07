@@ -376,8 +376,26 @@ body {
     font-family: var(--font-text);
     line-height: var(--line-height-normal);
     display: none;
+    user-select: text !important;
 }
 
+/* Ensure all preview content remains text-selectable even if themes disable it */
+#custom-preview *,
+#custom-preview *::before,
+#custom-preview *::after {
+    user-select: text !important;
+}
+
+/* Visual highlighting for text selection (themes were hiding it) */
+#custom-preview ::selection {
+    background: var(--text-selection, #3390FF) !important;
+    color: var(--text-on-accent, white) !important;
+}
+
+#custom-preview ::-moz-selection {
+    background: var(--text-selection, #3390FF) !important;
+    color: var(--text-on-accent, white) !important;
+}
 .meta-section {
     position: fixed;
     bottom: 0;

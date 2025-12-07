@@ -391,6 +391,9 @@ class MicroServer extends obsidian.Plugin {
         if (existsSync(bundlePath)) {
           const bundleContent = readFileSync(bundlePath, 'utf-8');
           res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
           res.send(bundleContent);
           console.log('✅ Served ui-bundle.js (', Math.round(bundleContent.length / 1024), 'KB)');
         } else {
@@ -420,6 +423,9 @@ class MicroServer extends obsidian.Plugin {
         if (existsSync(cssPath)) {
           const cssContent = readFileSync(cssPath, 'utf-8');
           res.setHeader('Content-Type', 'text/css; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
           res.send(cssContent);
           console.log('✅ Served style.css (', Math.round(cssContent.length / 1024), 'KB)');
         } else {

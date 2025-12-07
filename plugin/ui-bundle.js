@@ -30881,6 +30881,10 @@
   let currentYamlData = null;
   let contentWithoutYaml = "";
   let navigationHistory = [];
+  let kanbanState = null;
+  let kanbanDragState = { saving: false, fromLane: null, fromIndex: null, itemEl: null, sourceLaneEl: null };
+  let preferPluginPreview = false;
+  let pluginViewActive = false;
   function showWelcomeScreen() {
     const preview = document.getElementById("custom-preview");
     if (!preview) return;
@@ -31114,6 +31118,234 @@
       window._checkboxSaveInProgress = false;
     }
   }
+  function parseKanbanMarkdown(content) {
+    const lines = content.split("\n");
+    const settingsIndex = lines.findIndex((l2) => l2.trim().startsWith("%% kanban:settings"));
+    const settingsText = settingsIndex !== -1 ? lines.slice(settingsIndex).join("\n") : "";
+    const workLines = settingsIndex !== -1 ? lines.slice(0, settingsIndex) : [...lines];
+    let idx = 0;
+    const preambleLines = [];
+    while (idx < workLines.length && !workLines[idx].startsWith("## ")) {
+      preambleLines.push(workLines[idx]);
+      idx++;
+    }
+    const lanes = [];
+    const itemRegex = /^\s*[-*+]\s+\[( |x|X)\]\s+/;
+    while (idx < workLines.length) {
+      const line = workLines[idx];
+      if (!line.startsWith("## ")) {
+        idx++;
+        continue;
+      }
+      const title = line.replace(/^##\s+/, "").trim();
+      idx++;
+      const items = [];
+      while (idx < workLines.length && !workLines[idx].startsWith("## ")) {
+        if (workLines[idx].trim() === "") {
+          idx++;
+          continue;
+        }
+        if (itemRegex.test(workLines[idx])) {
+          const itemLines = [workLines[idx]];
+          idx++;
+          while (idx < workLines.length && !workLines[idx].startsWith("## ") && !itemRegex.test(workLines[idx])) {
+            if (workLines[idx].trim().startsWith("%% kanban:settings")) break;
+            if (workLines[idx].trim() === "" && itemRegex.test(workLines[idx + 1] || "")) break;
+            itemLines.push(workLines[idx]);
+            idx++;
+          }
+          items.push({ lines: itemLines });
+          continue;
+        }
+        idx++;
+      }
+      lanes.push({ title, items });
+    }
+    return { preambleLines, lanes, settingsText };
+  }
+  function serializeKanbanMarkdown(state) {
+    const parts = [];
+    if (state.preambleLines && state.preambleLines.length) {
+      parts.push(state.preambleLines.join("\n").replace(/\s+$/, ""));
+    }
+    state.lanes.forEach((lane, laneIdx) => {
+      if (parts.length && !parts[parts.length - 1].endsWith("\n\n")) parts.push("");
+      parts.push(`## ${lane.title}`);
+      if (!lane.items.length) {
+        parts.push("");
+      } else {
+        lane.items.forEach((item) => {
+          parts.push(item.lines.join("\n"));
+        });
+      }
+      if (laneIdx !== state.lanes.length - 1) parts.push("");
+    });
+    let body = parts.join("\n");
+    body = body.replace(/\n{3,}/g, "\n\n").trimEnd();
+    if (state.settingsText) {
+      body += "\n\n" + state.settingsText.trimStart();
+    }
+    return body + "\n";
+  }
+  function cloneKanbanState(state) {
+    if (!state) return null;
+    return {
+      preambleLines: [...state.preambleLines || []],
+      settingsText: state.settingsText,
+      lanes: (state.lanes || []).map((lane) => ({
+        title: lane.title,
+        items: (lane.items || []).map((item) => ({ lines: [...item.lines] }))
+      }))
+    };
+  }
+  function getDropIndex(container, clientY) {
+    const items = Array.from(container.querySelectorAll(".kanban-plugin__item")).filter((el) => !el.classList.contains("dragging"));
+    if (!items.length) return 0;
+    let idx = items.length;
+    for (let i2 = 0; i2 < items.length; i2++) {
+      const rect = items[i2].getBoundingClientRect();
+      const midpoint = rect.top + rect.height / 2;
+      if (clientY < midpoint) {
+        idx = i2;
+        break;
+      }
+    }
+    return idx;
+  }
+  function bindItemDragEvents(itemEl) {
+    if (itemEl.dataset.dndBound === "true") return;
+    itemEl.dataset.dndBound = "true";
+    itemEl.setAttribute("draggable", "true");
+    itemEl.addEventListener("dragstart", (e2) => {
+      const laneIndex = Number(itemEl.dataset.laneIndex || 0);
+      const itemIndex = Number(itemEl.dataset.itemIndex || 0);
+      kanbanDragState.fromLane = laneIndex;
+      kanbanDragState.fromIndex = itemIndex;
+      kanbanDragState.itemEl = itemEl;
+      kanbanDragState.sourceLaneEl = itemEl.closest(".kanban-plugin__lane");
+      itemEl.classList.add("dragging");
+      if (e2.dataTransfer) {
+        e2.dataTransfer.effectAllowed = "move";
+        e2.dataTransfer.setData("text/plain", "kanban-item");
+      }
+    });
+    itemEl.addEventListener("dragend", () => {
+      itemEl.classList.remove("dragging");
+      kanbanDragState.itemEl = null;
+    });
+  }
+  function reindexLaneItems(laneEl, laneIdx) {
+    const container = laneEl.querySelector(".kanban-plugin__lane-items") || laneEl;
+    Array.from(container.querySelectorAll(".kanban-plugin__item")).forEach((el, idx) => {
+      el.dataset.laneIndex = String(laneIdx);
+      el.dataset.itemIndex = String(idx);
+    });
+  }
+  async function handleKanbanDrop(e2) {
+    e2.preventDefault();
+    const laneEl = e2.currentTarget.closest(".kanban-plugin__lane");
+    if (!laneEl || kanbanDragState.fromLane === null) return;
+    const laneIndex = Number(laneEl.dataset.laneIndex || "0");
+    const itemsContainer = laneEl.querySelector(".kanban-plugin__lane-items") || laneEl;
+    const dropIndex = getDropIndex(itemsContainer, e2.clientY);
+    const dragging = document.querySelector(".kanban-plugin__item.dragging");
+    if (dragging) {
+      const siblings = Array.from(itemsContainer.querySelectorAll(".kanban-plugin__item"));
+      const targetNode = siblings[dropIndex];
+      if (targetNode && targetNode.parentNode === itemsContainer) {
+        itemsContainer.insertBefore(dragging, targetNode);
+      } else {
+        itemsContainer.appendChild(dragging);
+      }
+      reindexLaneItems(laneEl, laneIndex);
+      if (kanbanDragState.sourceLaneEl && kanbanDragState.sourceLaneEl.isConnected) {
+        const srcIdx = Number(kanbanDragState.sourceLaneEl.dataset.laneIndex || kanbanDragState.fromLane || 0);
+        reindexLaneItems(kanbanDragState.sourceLaneEl, srcIdx);
+      }
+    }
+    await persistKanbanMove(laneIndex, dropIndex);
+  }
+  async function persistKanbanMove(targetLaneIndex, rawDropIndex) {
+    var _a, _b;
+    if (!kanbanState || kanbanDragState.saving) return;
+    if (kanbanDragState.fromLane === null || kanbanDragState.fromIndex === null) return;
+    const sourceLaneIndex = kanbanDragState.fromLane;
+    const sourceItemIndex = kanbanDragState.fromIndex;
+    const nextState = cloneKanbanState(kanbanState);
+    const sourceLane = (_a = nextState == null ? void 0 : nextState.lanes) == null ? void 0 : _a[sourceLaneIndex];
+    const targetLane = (_b = nextState == null ? void 0 : nextState.lanes) == null ? void 0 : _b[targetLaneIndex];
+    if (!sourceLane || !targetLane) return;
+    const [movedItem] = sourceLane.items.splice(sourceItemIndex, 1);
+    if (!movedItem) return;
+    let dropIndex = rawDropIndex;
+    if (targetLaneIndex === sourceLaneIndex && dropIndex > sourceItemIndex) dropIndex = dropIndex - 1;
+    dropIndex = Math.min(Math.max(dropIndex, 0), targetLane.items.length);
+    targetLane.items.splice(dropIndex, 0, movedItem);
+    const newContent = serializeKanbanMarkdown(nextState);
+    try {
+      kanbanDragState.saving = true;
+      await conn.send("SAVE_FILE", { path: currentPath, data: newContent });
+      kanbanState = nextState;
+      const resp = await conn.send("OPEN_FILE", { path: currentPath });
+      const data = (resp == null ? void 0 : resp.data) || resp;
+      if ((data == null ? void 0 : data.renderedHTML) && data.viewType === "kanban") {
+        renderPluginData(data);
+      } else {
+        await conn.send("GET_RENDERED_FILE", { path: currentPath });
+      }
+    } catch (err) {
+      console.error("❌ Failed to persist Kanban move:", err);
+    } finally {
+      kanbanDragState.saving = false;
+      kanbanDragState.fromLane = null;
+      kanbanDragState.fromIndex = null;
+      kanbanDragState.itemEl = null;
+      kanbanDragState.sourceLaneEl = null;
+    }
+  }
+  async function setupKanbanDragAndDrop() {
+    var _a, _b;
+    const preview = document.getElementById("custom-preview");
+    if (!preview) return;
+    const board = preview.querySelector(".kanban-plugin");
+    if (!board || !currentPath) return;
+    const fileResult = await conn.send("GET_FILE", { path: currentPath });
+    const content = ((_a = fileResult == null ? void 0 : fileResult.data) == null ? void 0 : _a.data) || ((_b = fileResult == null ? void 0 : fileResult.data) == null ? void 0 : _b.content) || (fileResult == null ? void 0 : fileResult.data) || "";
+    if (typeof content !== "string") {
+      console.warn("⚠️ Kanban drag/drop skipped: content not string");
+      return;
+    }
+    const parsed = parseKanbanMarkdown(content);
+    if (!parsed.lanes.length) {
+      console.warn("⚠️ Kanban drag/drop skipped: no lanes found");
+      return;
+    }
+    kanbanState = parsed;
+    const laneElements = Array.from(board.querySelectorAll(".kanban-plugin__lane"));
+    laneElements.forEach((laneEl, laneIdx) => {
+      laneEl.dataset.laneIndex = String(laneIdx);
+      const itemsContainer = laneEl.querySelector(".kanban-plugin__lane-items") || laneEl;
+      laneEl.addEventListener("dragover", (e2) => {
+        e2.preventDefault();
+      });
+      laneEl.addEventListener("drop", handleKanbanDrop);
+      const itemElements = Array.from(itemsContainer.querySelectorAll(".kanban-plugin__item"));
+      itemElements.forEach((itemEl, itemIdx) => {
+        itemEl.dataset.laneIndex = String(laneIdx);
+        itemEl.dataset.itemIndex = String(itemIdx);
+        bindItemDragEvents(itemEl);
+        const checkboxes = Array.from(itemEl.querySelectorAll('input[type="checkbox"]'));
+        checkboxes.forEach((cb) => {
+          if (cb.dataset.kbBound === "true") return;
+          cb.dataset.kbBound = "true";
+          cb.disabled = true;
+          cb.style.display = "none";
+          cb.style.pointerEvents = "none";
+          cb.style.opacity = "0";
+        });
+      });
+    });
+  }
   async function connectToVault() {
     const btn = document.getElementById("connect-btn");
     const pass = document.getElementById("password-input").value;
@@ -31141,7 +31373,7 @@
     }
   }
   function handleMessage(msg) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     console.log("🎯 Message received:", msg.type);
     if (msg.type === "CONNECTED") {
       document.getElementById("connect-overlay").style.display = "none";
@@ -31193,12 +31425,7 @@
         return;
       }
       if (isReadingMode) {
-        const loading = document.getElementById("preview-loading");
-        const preview = document.getElementById("custom-preview");
-        if (loading) loading.style.display = "flex";
-        if (preview) preview.style.display = "none";
-        toggleViewMode();
-        setTimeout(() => toggleViewMode(), 50);
+        if (easyMDE) easyMDE.codemirror.refresh();
       } else {
         if (easyMDE) easyMDE.codemirror.refresh();
       }
@@ -31211,6 +31438,7 @@
       if (isCheckboxUpdate) {
         console.log("📍 RENDERED_FILE from checkbox update, will preserve scroll");
       }
+      const renderedPath = ((_h = msg.meta) == null ? void 0 : _h.path) || msg.path;
       if (msg.data.files) {
         const result = processFileData({ files: msg.data.files });
         masterFileList = result.masterFileList;
@@ -31230,12 +31458,17 @@
           contentWithoutYaml = editorContent;
         }
       }
-      renderYamlProperties(msg.data.yaml, ((_h = msg.meta) == null ? void 0 : _h.path) || msg.path);
+      renderYamlProperties(msg.data.yaml);
       const preserveScroll = window._isCheckboxUpdate === true;
       console.log(`🔍 RENDERED_FILE: preserveScroll=${preserveScroll}, savedPos=${window._savedScrollPosition}`);
-      renderPreview(msg.data.html, preserveScroll);
       renderBacklinks(msg.data.backlinks || []);
-      const renderedPath = ((_i = msg.meta) == null ? void 0 : _i.path) || msg.path;
+      if (preferPluginPreview && renderedPath === currentPath) {
+        console.log("⏭️ Skipping markdown render because plugin preview is preferred");
+        if (panelState.graph && renderedPath) renderLocalGraph(renderedPath);
+        return;
+      }
+      renderPreview(msg.data.html, preserveScroll);
+      pluginViewActive = false;
       if (panelState.graph && renderedPath) renderLocalGraph(renderedPath);
       return;
     }
@@ -31409,6 +31642,9 @@
         el.style.setProperty("background-color", secondaryAltBg, "important");
       });
     }
+    document.querySelectorAll("#custom-preview, #custom-preview *").forEach((el) => {
+      el.style.setProperty("user-select", "text", "important");
+    });
     if (textMuted && borderColor) {
       document.querySelectorAll("#custom-preview blockquote").forEach((el) => {
         el.style.setProperty("color", textMuted, "important");
@@ -31927,11 +32163,13 @@
       if (data.viewType === "kanban") {
         pluginName = "Kanban Plugin by mgmeyers";
       }
+      preferPluginPreview = true;
+      pluginViewActive = true;
       preview.innerHTML = `
             <div style="padding: 0px;">
                 <div style="background: var(--background-secondary); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
                     <strong>${pluginName}</strong>
-                    <span style="float: right; color: var(--text-muted);">Read-only view</span>
+                    <span style="float: right; color: var(--text-muted);">Read Only, Drag and Drop Enabled</span>
                 </div>
                 ${data.renderedHTML}
             </div>
@@ -31957,6 +32195,18 @@
     padding: 8px !important;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
     margin-bottom: 4px !important;
+}
+
+.kanban-plugin input[type="checkbox"] {
+    display: none !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+}
+
+.kanban-plugin__item.is-checked .kanban-plugin__item-title,
+.kanban-plugin__item.is-checked .kanban-plugin__item-title p {
+    text-decoration: line-through !important;
+    opacity: 0.6 !important;
 }
 
 .kanban-plugin__item:hover {
@@ -32001,18 +32251,34 @@
 /* Disable drag and drop interactions */
 .kanban-plugin__item,
 .kanban-plugin__lane {
-    cursor: default !important;
+    cursor: grab !important;
+    user-select: none !important;
 }
 `;
         pluginStyleTag.textContent = data.pluginCSS + "\n" + kanbanFallbackCSS;
       }
       setTimeout(() => applyThemeToElements(), 100);
+      if (data.viewType === "kanban") {
+        setTimeout(() => {
+          setupKanbanDragAndDrop().catch((err) => console.error("❌ Kanban drag setup failed:", err));
+        }, 50);
+      } else {
+        kanbanState = null;
+        preferPluginPreview = false;
+        pluginViewActive = false;
+      }
     }
   }
   window.togglePluginView = async function() {
     console.log("🎯 togglePluginView called!", { currentPath, hasConn: !!conn });
     if (!currentPath || !conn) {
       console.error("❌ togglePluginView failed: missing currentPath or conn", { currentPath, conn });
+      return;
+    }
+    if (pluginViewActive) {
+      preferPluginPreview = false;
+      pluginViewActive = false;
+      await conn.send("GET_RENDERED_FILE", { path: currentPath });
       return;
     }
     try {
@@ -32787,6 +33053,10 @@ ${bodyContent}`;
         navigationHistory.shift();
       }
     }
+    preferPluginPreview = false;
+    pluginViewActive = false;
+    kanbanState = null;
+    kanbanDragState = { saving: false, fromLane: null, fromIndex: null, itemEl: null, sourceLaneEl: null };
     currentPath = path;
     const filenameEl = document.getElementById("filename");
     const filename = path.split("/").pop().replace(".md", "");
@@ -33041,6 +33311,8 @@ ${bodyContent}`;
         saveBtn.classList.remove("hidden");
         saveBtn.style.display = "block";
       }
+      preferPluginPreview = false;
+      pluginViewActive = false;
       preview.style.display = "none";
       loading.style.display = "none";
       editorEl.style.display = "flex";
