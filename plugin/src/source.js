@@ -47,6 +47,25 @@ class MicroServer extends obsidian.Plugin {
     await this.loadSettings();
     this.addSettingTab(new MicroServerSettingTab(this.app, this));
     
+    // BETA KILL SWITCH: Check if plugin is locked
+    try {
+      const statusRes = await fetch(`${API_BASE_URL}/api/status`);
+      const { beta_locked } = await statusRes.json();
+      
+      if (beta_locked === true) {
+        // Check if user has valid license key
+        if (!this.settings.remoteLicenseKey) {
+          new obsidian.Notice('⚠️ Note Relay is in Private Beta. Invite Key Required.', 10000);
+          console.log('[Beta Lock] Server startup blocked - no valid license key');
+          return; // Exit onload - do not start server
+        }
+        console.log('[Beta Lock] Valid license detected - proceeding with startup');
+      }
+    } catch (err) {
+      // Fail-open: If API is unreachable, allow local usage (don't brick existing users)
+      console.warn('[Beta Lock] Status check failed - defaulting to open (offline mode)', err);
+    }
+    
     // Generate pluginId from vault path for license validation
     const vaultPath = this.app.vault.adapter.basePath;
     this.pluginId = await hashString(vaultPath);
